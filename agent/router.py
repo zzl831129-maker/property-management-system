@@ -1,8 +1,9 @@
 # agent/router.py
 from tools.ledger_tool import get_ledger_balance
 from tools.parking_tool import get_parking_info
-from google import genai
-from config import GEMINI_API_KEY
+import google.generativeai as genai
+import os
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # 宣告工具清單
 tools_list = [get_ledger_balance]
