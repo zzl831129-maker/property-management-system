@@ -11,7 +11,7 @@ tools_list = [get_ledger_balance, get_parking_info]
 
 def get_ai_response(user_text):
     model = genai.GenerativeModel(
-        model_name="models/gemini-1.5-flash", 
+        model_name="models/gemini-3.5-flash", 
         tools=tools_list
     )
     
