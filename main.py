@@ -5,10 +5,7 @@ from linebot import LineBotApi
 from linebot.models import TextSendMessage
 from agent.router import get_ai_response
 
-# 1. 載入環境變數
-load_dotenv()
-
-# 2. 初始化 FastAPI
+# 1. 初始化 FastAPI
 app = FastAPI()
 
 token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
@@ -16,7 +13,7 @@ line_bot_api = LineBotApi(token)
 
 line_bot_api = LineBotApi(token)
 
-# 4. 定義路由
+# 2. 定義路由
 @app.post("/callback")
 async def callback(request: Request):
     data = await request.json()
