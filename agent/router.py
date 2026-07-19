@@ -1,22 +1,20 @@
-# agent/router.py
+import os
+import google.generativeai as genai
 from tools.ledger_tool import get_ledger_balance
 from tools.parking_tool import get_parking_info
-import google.generativeai as genai
-import os
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# 進行設定
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # 宣告工具清單
-tools_list = [get_ledger_balance]
+tools_list = [get_ledger_balance, get_parking_info]
 
 def get_ai_response(user_text):
-    # 將新工具加入 tools_list
-    tools_list = [get_ledger_balance, get_parking_info]
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    # 關鍵：在發送請求時，必須把 tools 傳進去
-    response = client.models.generate_content(
-        model="models/gemini-3.5-flash",
-        contents=user_text,
-        config={"tools": tools_list} # 這裡賦予 AI 使用權限
+    # 使用模型直接進行生成，不需要建立 client
+    model = genai.GenerativeModel(
+        model_name="models/gemini-3.5-flash",
+        tools=tools_list
     )
+    
+    response = model.generate_content(user_text)
     return response.text
