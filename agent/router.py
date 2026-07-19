@@ -10,11 +10,15 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 tools_list = [get_ledger_balance, get_parking_info]
 
 def get_ai_response(user_text):
-    # 使用模型直接進行生成，不需要建立 client
     model = genai.GenerativeModel(
-        model_name="models/gemini-3.5-flash",
+        model_name="models/gemini-3.5-flash", # 請確認你使用的模型名稱
         tools=tools_list
     )
     
     response = model.generate_content(user_text)
+    
+    # 修改這裡：檢查是否有 function_call
+    if response.candidates[0].content.parts[0].function_call:
+        return "AI 正在呼叫工具處理您的需求，請稍候..."
+    
     return response.text
