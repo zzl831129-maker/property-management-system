@@ -1,6 +1,7 @@
 # tools/ledger_tool.py
 from services.google_sheet import get_sheet_data
-from config import LEDGER_SHEET_ID
+import os
+LEDGER_SHEET_ID = os.getenv("LEDGER_SHEET_ID")
 
 def get_ledger_balance(resident_id: str):
     # 1. 抓取所有資料

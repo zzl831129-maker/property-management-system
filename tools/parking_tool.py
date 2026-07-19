@@ -1,6 +1,7 @@
 # tools/parking_tool.py
 from services.google_sheet import get_sheet_data
-from config import LEDGER_SHEET_ID
+import os
+LEDGER_SHEET_ID = os.getenv("LEDGER_SHEET_ID")
 
 def get_parking_info(resident_id: str):
     data = get_sheet_data(LEDGER_SHEET_ID, "車位登記")
