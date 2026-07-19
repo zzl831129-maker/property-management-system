@@ -11,14 +11,14 @@ tools_list = [get_ledger_balance, get_parking_info]
 
 def get_ai_response(user_text):
     model = genai.GenerativeModel(
-        model_name="models/gemini-3.5-flash", # 請確認你使用的模型名稱
+        model_name="models/gemini-1.5-flash", 
         tools=tools_list
     )
     
-    response = model.generate_content(user_text)
+    # 建立一個 chat session
+    chat = model.start_chat(enable_automatic_function_calling=True)
     
-    # 修改這裡：檢查是否有 function_call
-    if response.candidates[0].content.parts[0].function_call:
-        return "AI 正在呼叫工具處理您的需求，請稍候..."
+    # 發送訊息並讓模型自動處理工具呼叫
+    response = chat.send_message(user_text)
     
     return response.text

@@ -1,31 +1,26 @@
-# tools/ledger_tool.py
-from services.google_sheet import get_sheet_data
 import os
-LEDGER_SHEET_ID = os.getenv("LEDGER_SHEET_ID")
+import google.generativeai as genai
+from tools.ledger_tool import get_ledger_balance
+from tools.parking_tool import get_parking_info
 
-def get_ledger_balance(resident_id: str):
-    # 1. 抓取所有資料
-    data = get_sheet_data(LEDGER_SHEET_ID, "零用金明細")
+# 進行設定
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# 宣告工具清單
+tools_list = [get_ledger_balance, get_parking_info]
+
+def get_ai_response(user_text):
+    # 務必使用 1.5-flash，因為它對工具呼叫的支援度最好
+    model = genai.GenerativeModel(
+        model_name="gemini-3.5-flash",
+        tools=tools_list
+    )
     
-    total_income = 0
-    total_expense = 0
-    found = False
+    # 啟用自動工具呼叫功能
+    chat = model.start_chat(enable_automatic_function_calling=True)
     
-    # 2. 遍歷資料進行累加運算
-    for row in data:
-        # 比對戶別 (注意：你的表格欄位名稱是 '戶別')
-        if str(row.get('戶別', '')) == str(resident_id):
-            found = True
-            # 將字串轉為數字進行加總 (若欄位為空則預設為 0)
-            income = float(row.get('收入金額', 0) or 0)
-            expense = float(row.get('支出金額', 0) or 0)
-            
-            total_income += income
-            total_expense += expense
-            
-    if not found:
-        return f"抱歉，找不到戶別為 {resident_id} 的住戶資料。"
+    # AI 會自動分析 user_text，如果需要，會自動呼叫 ledger_tool 或 parking_tool
+    response = chat.send_message(user_text)
     
-    # 3. 計算餘額
-    balance = total_income - total_expense
-    return f"{resident_id} 戶目前的總收入為 {total_income} 元，總支出為 {total_expense} 元，目前餘額為 {balance} 元。"
+    # 直接回傳結果
+    return response.text
