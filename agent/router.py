@@ -1,16 +1,18 @@
+# 檔案路徑：agent/router.py
 import os
 import google.generativeai as genai
 
-# 進行設定
+# 在這裡設定 API Key
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 def get_ai_response(user_text):
-    # 將 import 放在函式內部，確保完全不會有循環引用
+    # 在這裡匯入工具，避免循環引用
     from tools.ledger_tool import get_ledger_balance
     from tools.parking_tool import get_parking_info
     
     tools_list = [get_ledger_balance, get_parking_info]
     
+    # 務必使用 1.5-flash
     model = genai.GenerativeModel(
         model_name="gemini-3.5-flash",
         tools=tools_list
