@@ -1,13 +1,20 @@
-# services/google_sheet.py
+import json
+import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import os
 
 def get_sheet_connection():
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    json_path = os.path.join(base_dir, "credentials.json")
+    # 1. 直接讀取環境變數
+    json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    
+    # 2. 將 JSON 字串轉為字典 (dict)
+    creds_dict = json.loads(json_str)
+    
     scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets']
-    creds = ServiceAccountCredentials.from_json_keyfile_name(json_path, scope)
+    
+    # 3. 關鍵修正：使用 from_json_keyfile_dict 讀取字典，而不是讀取檔案路徑
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    
     return gspread.authorize(creds)
 
 def get_sheet_data(sheet_id, sheet_name):
