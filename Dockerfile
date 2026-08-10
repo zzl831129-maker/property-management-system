@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 複製其餘程式碼
 COPY . .
 
+# Hugging Face Spaces 使用 7860
 EXPOSE 7860
 
-# 啟動 Streamlit (Render 會自動對應外部 Port)
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=10000", "--server.address=0.0.0.0"]
+# 啟動 Streamlit
+ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=7860", "--server.address=0.0.0.0"]
