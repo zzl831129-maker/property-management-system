@@ -31,11 +31,11 @@ st.title("🏢 社區物業智慧管理系統")
 st.caption("✨7/29")
 
 # ==========================================
-# 🔌 Google Sheets 雲端連線實體大腦 (已修正 SPREADSHEET_NAME)
+# 🔌 Google Sheets 雲端連線實體大腦
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
-# 修正重點：改為直接帶入 Google 試算表在雲端硬碟中的檔案名稱，解決 Public 寫入報錯問題
-SPREADSHEET_NAME = "物業管理分析系統"  
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/18DI3Lpyk8R5pT_3K7B4oLLK_vsHYuWh2JXRP8MLyGQM/edit"
+SPREADSHEET_NAME = SPREADSHEET_URL  
 
 def generate_default_units():
     units = []
@@ -409,6 +409,7 @@ if menu == "📝 零用金收支登記與快查及對帳":
                     df_daily_agg = df_daily_agg[df_daily_agg["總金額"] > 0].sort_values(by="總金額", ascending=False)
                     
                     if not df_daily_agg.empty:
+                        # 將日結視覺化也改為橫式圖表以保持介面一致性與美觀
                         fig_daily_bar = px.bar(
                             df_daily_agg,
                             x="總金額",
@@ -417,7 +418,7 @@ if menu == "📝 零用金收支登記與快查及對帳":
                             text="總金額"
                         )
                         fig_daily_bar.update_layout(yaxis={"categoryorder": "total ascending"}, margin=dict(l=20, r=20, t=20, b=20))
-                        st.plotly_chart(fig_daily_bar, use_container_width=True)
+                        st.plotly_chart(fig_daily_bar, use_container_width=True, key="daily_bar_chart")
                         
                         top_res = df_daily_agg.iloc[0]
                         st.info(f"💡 **今日收支最頻繁／金額佔比最高戶別**：【{top_res['戶別']}】 (總計 ${top_res['總金額']:,.0f} 元)")
@@ -461,6 +462,7 @@ if menu == "📝 零用金收支登記與快查及對帳":
                     df_m_res_agg = df_monthly_filtered.groupby("戶別")["總金額"].sum().reset_index()
                     df_m_res_agg = df_m_res_agg[df_m_res_agg["總金額"] > 0].sort_values(by="總金額", ascending=False)
                     if not df_m_res_agg.empty:
+                        # 依照你的需求，將這張圖完美改成橫式，徹底解決直式擠在一起很醜的問題
                         fig_monthly_bar = px.bar(
                             df_m_res_agg,
                             x="總金額",
@@ -469,7 +471,7 @@ if menu == "📝 零用金收支登記與快查及對帳":
                             text="總金額"
                         )
                         fig_monthly_bar.update_layout(yaxis={"categoryorder": "total ascending"}, margin=dict(l=20, r=20, t=20, b=20))
-                        st.plotly_chart(fig_monthly_bar, use_container_width=True)
+                        st.plotly_chart(fig_monthly_bar, use_container_width=True, key="monthly_bar_chart")
                 else:
                     st.caption("該月暫無收支走勢資料。")
             else:
@@ -637,6 +639,7 @@ elif menu == "🚗 車位登記及查詢":
     st.markdown("---")
     st.markdown("#### 📈 【車位圖像化分析】車位與車輛佔比狀況 (橫式長條圖)")
 
+    # 1. 總車格-空位與有使用的占比 (橫式)
     parking_ratio_data = pd.DataFrame({
         "車位類別": ["汽車位", "機車位"],
         "總車格": [total_car_cap, moto_cap],
@@ -654,8 +657,9 @@ elif menu == "🚗 車位登記及查詢":
         text_auto=True
     )
     fig_parking_ratio.update_layout(barmode="stack", yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(fig_parking_ratio, use_container_width=True)
+    st.plotly_chart(fig_parking_ratio, use_container_width=True, key="parking_ratio_chart")
 
+    # 2. 車輛- 所有車跟租客車的占比 (橫式)
     vehicle_ratio_data = pd.DataFrame({
         "車輛類型": ["汽車", "機車"],
         "所有車 (自用/住戶)": [
@@ -675,15 +679,496 @@ elif menu == "🚗 車位登記及查詢":
         text_auto=True
     )
     fig_vehicle_ratio.update_layout(barmode="stack", yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(fig_vehicle_ratio, use_container_width=True)
+    st.plotly_chart(fig_vehicle_ratio, use_container_width=True, key="vehicle_ratio_chart")
+
+    all_units_set = set(st.session_state.resident_list) - {"1A"}
+    unregistered_car_units = sorted(list(all_units_set - units_with_registered_car))
+    unregistered_moto_units = sorted(list(all_units_set - units_with_registered_moto))
+    
+    with st.expander("🔍 點擊展開：未登記「汽車」或「機車」之住戶清單"):
+        uc_col1, uc_col2 = st.columns(2)
+        with uc_col1:
+            st.markdown(f"🚗 **未登記有效汽車車牌之戶別 ({len(unregistered_car_units)} 戶)：**")
+            st.info(", ".join(unregistered_car_units) if unregistered_car_units else "無")
+        with uc_col2:
+            st.markdown(f"🛵 **未登記有效機車車牌之戶別 ({len(unregistered_moto_units)} 戶)：**")
+            st.info(", ".join(unregistered_moto_units) if unregistered_moto_units else "無")
+
+    household_counts = df_park_raw["戶別"].value_counts() if not df_park_raw.empty and "戶別" in df_park_raw.columns else pd.Series(dtype=int)
+    exceeded_households = set(household_counts[household_counts >= 3].index.tolist())
+    
+    if not df_park_raw.empty and "車輛備註" in df_park_raw.columns:
+        memo_marked = set(df_park_raw[df_park_raw["車輛備註"].str.contains("第三台車|彈性", na=False)]["戶別"].tolist())
+    else:
+        memo_marked = set()
+        
+    special_third_car_units = sorted(list(exceeded_households.union(memo_marked)))
+
+    if special_third_car_units:
+        st.markdown(f"""
+        <div class="info-box-custom">
+            🚗🚙 <b>【第三台車與特殊車位整合清單 (含自動防呆偵測)】</b>： 共計 <b>{len(special_third_car_units)}</b> 戶擁有第三台車或彈性車位 -> <code>{", ".join(special_third_car_units)}</code>
+        </div>
+        """, unsafe_allow_html=True)
+
+    if tenant_units_set:
+        st.markdown(f"""
+        <div class="info-box-custom">
+            👥 <b>【目前擁有租客車輛之戶別整合清單】</b>： 共計 <b>{len(tenant_units_set)}</b> 戶有租客車輛進駐 -> <code>{", ".join(sorted(list(tenant_units_set)))}</code>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    
+    p_col1, p_col2 = st.columns([3, 2])
+    
+    with p_col1:
+        st.subheader("🔍 車位資產檢索與空位即時判斷")
+        
+        view_mode = st.radio("顯示檢視模式：", ["僅顯示目前空位 (未登記車牌)", "顯示全部車位資產登記"], horizontal=True, key="park_view_mode")
+        p_search = st.text_input("💡 請輸入 戶別(如:2A)、車位區域、車主姓名 或 車牌 快速檢索：", key="park_search_input")
+        
+        df_park_display = df_park_raw.copy()
+        if not df_park_display.empty:
+            def check_status(row_data):
+                plate_val = str(row_data.get("車牌號碼", "")).strip().upper()
+                if not plate_val or plate_val == "NAN" or plate_val == "NONE" or plate_val == "" or plate_val.startswith("CAR-") or plate_val.startswith("MOTO-"):
+                    return "🟢 綁定空位 (未註冊車牌)"
+                else:
+                    tag = str(row_data.get("身分標記", "屋主"))
+                    memo_info = str(row_data.get("車輛備註", "")).strip()
+                    memo_str = f" [備註: {memo_info}]" if memo_info and memo_info != "nan" else ""
+                    return f"🔴 已登記車輛 ({tag}){memo_str}"
+
+            df_park_display["即時狀態"] = df_park_display.apply(check_status, axis=1)
+            
+            if view_mode == "僅顯示目前空位 (未登記車牌)":
+                df_park_display = df_park_display[df_park_display["即時狀態"].str.contains("空位")]
+
+            if p_search.strip():
+                k = p_search.strip().lower()
+                df_park_display = df_park_display[
+                    df_park_display["車位號碼"].astype(str).str.lower().str.contains(k, na=False) | 
+                    df_park_display["車主姓名"].astype(str).str.lower().str.contains(k, na=False) | 
+                    df_park_display["車牌號碼"].astype(str).str.lower().str.contains(k, na=False) |
+                    df_park_display["戶別"].astype(str).str.lower().str.contains(k, na=False) |
+                    df_park_display["身分標記"].astype(str).str.lower().str.contains(k, na=False) |
+                    df_park_display["車輛備註"].astype(str).str.lower().str.contains(k, na=False)
+                ]
+            
+            def highlight_empty_slots(row):
+                if "空位" in str(row.get("即時狀態", "")):
+                    return ['background-color: #FFF3CD; color: #856404; font-weight: bold;' for _ in row]
+                else:
+                    return ['' for _ in row]
+
+            st.dataframe(df_park_display.style.apply(highlight_empty_slots, axis=1), use_container_width=True, hide_index=True)
+        else:
+            st.info("💡 目前車位資料庫尚無資料。")
+            
+    with p_col2:
+        st.subheader("📝 車位持有異動登記 (支援第三台車與特殊備註)")
+        
+        p_res_code = st.selectbox("選擇持有戶別：", st.session_state.resident_list, key="p_reg_res")
+        
+        existing_res_records = df_park_raw[df_park_raw["戶別"] == p_res_code] if not df_park_raw.empty and "戶別" in df_park_raw.columns else pd.DataFrame()
+        current_res_count = len(existing_res_records)
+        is_auto_third_car = current_res_count >= 2
+        
+        if is_auto_third_car:
+            st.markdown(f"""
+            <div class="alert-box-custom" style="padding: 8px; font-size: 13px;">
+                ⚠️ <b>防呆偵測</b>：戶別 <b>{p_res_code}</b> 目前已有 {current_res_count} 筆登記，此筆將自動歸類為第三台車或彈性車位！
+            </div>
+            """, unsafe_allow_html=True)
+
+        p_space_category = st.radio("選擇車格型態：", ["🚗 汽車格", "🛵 機車格"], horizontal=True, key="p_space_cat")
+        is_car_mode = "汽車" in p_space_category
+        
+        default_bound = ""
+        if is_car_mode:
+            default_bound = st.session_state.car_space_mapping.get(p_res_code, "")
+            if default_bound:
+                floor_prefix = default_bound.split("-")[0] if "-" in default_bound else "B3"
+                num_part = default_bound.split("-")[1] if "-" in default_bound else default_bound
+                default_full_id = f"汽車位({floor_prefix}){num_part}"
+            else:
+                default_full_id = f"汽車位(B3)-{p_res_code}"
+        else:
+            default_bound = st.session_state.moto_space_mapping.get(p_res_code, "")
+            if default_bound:
+                default_full_id = f"機車位-{default_bound}"
+            else:
+                default_full_id = f"機車位-{p_res_code}"
+
+        use_custom_space = st.checkbox("⚙️ 啟用彈性指定車位 (適用於第二台車、第三台車或停放特殊車位)", key="p_use_custom_space")
+        
+        if use_custom_space:
+            p_id = st.text_input("請手動輸入/調整車位代號：", value=default_full_id, placeholder="例如：B3-33 或 訪客車位", key="p_custom_space_input")
+        else:
+            p_id = default_full_id
+            st.markdown(f"""
+            <div class="info-box-custom">
+                🔗 <b>【雲端自動帶入車位】</b> 戶別 {p_res_code} 對應車位：<b>{p_id}</b>
+            </div>
+            """, unsafe_allow_html=True)
+
+        is_tenant_checked = st.checkbox("🏷️ 勾選此車輛為【租客車輛】 (若不勾選則預設為屋主車輛)", key="p_reg_is_tenant")
+        identity_tag = "租客" if is_tenant_checked else "屋主"
+
+        raw_plate_input = st.text_input("車牌號碼 (車牌辨識免破折號)：", placeholder="ABC1234 (留白即為空位)", key="p_reg_plate")
+        p_plate = format_plate_number(raw_plate_input)
+        
+        if raw_plate_input.strip() and p_plate != raw_plate_input.strip().upper():
+            st.caption(f"✨ 【車牌自動防呆轉換】已轉為無破折號標準車牌：**{p_plate}**")
+
+        p_name = st.text_input("車主姓名：", placeholder="例如：詹詹", key="p_reg_name").strip()
+        p_phone = st.text_input("連絡電話：", placeholder="例如：0912345678", key="p_reg_phone")
+        
+        default_memo_text = "第三台車" if is_auto_third_car else ""
+        p_vehicle_memo = st.text_input("📝 車輛備註 (選填，說明特殊狀況)：", value=default_memo_text, placeholder="例如：第三台車、租客第二台車、停放臨時格等", key="p_reg_vehicle_memo")
+        
+        if st.button("💾 新增車位資產登記", type="primary", use_container_width=True, key="p_reg_btn"):
+            cleaned_phone = p_phone.strip().replace("-", "").replace(" ", "")
+            if not p_name or not p_phone.strip():
+                st.error("❌ 【防呆阻擋】車主姓名與連絡電話為必填項目，不可留白！")
+            elif len(cleaned_phone) != 10 or not cleaned_phone.isdigit():
+                st.error(f"❌ 【防呆阻擋】聯絡電話格式有誤！您輸入了 {len(cleaned_phone)} 碼（目前規定手機號碼必須為精確 10 碼數字，例如 0912345678）。")
+            else:
+                with st.spinner("正在將新車位資料寫入雲端..."):
+                    next_p_id = int(df_park_raw["流水號"].max()) + 1 if not df_park_raw.empty and "流水號" in df_park_raw.columns and not df_park_raw["流水號"].isnull().all() else 1
+                    
+                    new_park_row = {
+                        "流水號": next_p_id, 
+                        "車位號碼": p_id, 
+                        "戶別": p_res_code, 
+                        "車牌號碼": p_plate, 
+                        "車主姓名": p_name,
+                        "連絡電話": str(p_phone.strip()), 
+                        "身分標記": identity_tag,
+                        "車輛備註": p_vehicle_memo.strip(),
+                        "登記日期": datetime.date.today().strftime("%Y-%m-%d")
+                    }
+                    df_updated_park = pd.concat([df_park_raw, pd.DataFrame([new_park_row])], ignore_index=True)
+                    if save_parking_ledger(df_updated_park):
+                        st.session_state.parking_data = df_updated_park
+                        st.success(f"🎉 車位 {p_id} 登記成功（身分：{identity_tag}，車牌：{p_plate if p_plate else '無'}）！")
+                        time.sleep(0.5)
+                        st.rerun()
+
+    st.markdown("---")
+    st.subheader("🚗 ＆ 🛵 住戶專屬車位雲端固定綁定管理後台")
+    
+    bind_tab1, bind_tab2 = st.tabs(["🚗 汽車位固定綁定設定", "🛵 機車位固定綁定設定"])
+    
+    with bind_tab1:
+        with st.form("car_binding_form"):
+            b_col1, b_col2 = st.columns(2)
+            with b_col1:
+                bind_res = st.selectbox("選擇要綁定的住戶戶別", st.session_state.resident_list, key="bind_car_res")
+                bind_floor = st.selectbox("選擇停車場層級", ["B1", "B2", "B3"], key="bind_car_floor")
+            with b_col2:
+                bind_space_no = st.text_input("車位編號 (例如: 104 或 33)", placeholder="104", key="bind_car_no")
+                
+            bind_submit = st.form_submit_button("🔗 儲存並連動更新車位登記", type="primary")
+            
+            if bind_submit:
+                if not bind_space_no.strip():
+                    st.error("❌ 【防呆阻擋】車位編號不可為空！")
+                else:
+                    raw_car_no = bind_space_no.strip()
+                    
+                    if raw_car_no.endswith("4"):
+                        clean_num_str = "".join([c for c in raw_car_no if c.isdigit()])
+                        if clean_num_str:
+                            num_val = int(clean_num_str)
+                            converted_car_no = f"{num_val - 1}-1"
+                        else:
+                            converted_car_no = raw_car_no
+                    else:
+                        converted_car_no = raw_car_no
+
+                    combined_space = f"{bind_floor}-{converted_car_no}"
+                    
+                    st.session_state.car_space_mapping[bind_res] = combined_space
+                    save_binding_mapping("汽車位綁定", st.session_state.car_space_mapping)
+                    
+                    df_p_current = st.session_state.parking_data.copy()
+                    if not df_p_current.empty:
+                        df_motos_only = df_p_current[df_p_current["車位號碼"].str.contains("機車", na=False)].copy()
+                        df_other_cars = df_p_current[(df_p_current["車位號碼"].str.contains("汽車", na=False)) & (df_p_current["戶別"] != bind_res)].copy()
+                    else:
+                        df_motos_only = pd.DataFrame(columns=["流水號", "車位號碼", "戶別", "車牌號碼", "車主姓名", "連絡電話", "身分標記", "車輛備註", "登記日期"])
+                        df_other_cars = pd.DataFrame(columns=["流水號", "車位號碼", "戶別", "車牌號碼", "車主姓名", "連絡電話", "身分標記", "車輛備註", "登記日期"])
+                    
+                    new_car_reg_row = {
+                        "車位號碼": f"汽車位({bind_floor}){converted_car_no}",
+                        "戶別": bind_res,
+                        "車牌號碼": "",
+                        "車主姓名": f"住戶-{bind_res}",
+                        "連絡電話": "0900000000",
+                        "身分標記": "屋主",
+                        "車輛備註": "",
+                        "登記日期": datetime.date.today().strftime("%Y-%m-%d")
+                    }
+                    
+                    combined_park_df = pd.concat([df_other_cars, df_motos_only, pd.DataFrame([new_car_reg_row])], ignore_index=True)
+                    combined_park_df["流水號"] = range(1, len(combined_park_df) + 1)
+                    
+                    if save_parking_ledger(combined_park_df):
+                        st.session_state.parking_data = combined_park_df
+                        st.success(f"🎉 雲端與車位登記同步成功：戶別 **{bind_res}** 成功綁定 **{combined_space}**（預設為無車牌空位）！")
+                        time.sleep(1)
+                        st.rerun()
+
+        if st.session_state.car_space_mapping:
+            st.markdown("#### 📋 目前雲端已建立的汽車位綁定清單：")
+            car_map_df = pd.DataFrame(list(st.session_state.car_space_mapping.items()), columns=["戶別", "車位編號"])
+            st.dataframe(car_map_df[car_map_df["車位編號"] != ""], use_container_width=True, hide_index=True)
+
+    with bind_tab2:
+        with st.form("moto_binding_form"):
+            m_col1, m_col2 = st.columns(2)
+            with m_col1:
+                bind_m_res = st.selectbox("選擇要綁定的住戶戶別", st.session_state.resident_list, key="bind_moto_res")
+            with m_col2:
+                bind_m_no = st.text_input("機車位編號 (例如: 4 或 33)", placeholder="4", key="bind_moto_no")
+                
+            bind_m_submit = st.form_submit_button("🔗 儲存並連動更新車位登記", type="primary")
+            
+            if bind_m_submit:
+                if not bind_m_no.strip():
+                    st.error("❌ 【防呆阻擋】機車位編號不可為空！")
+                else:
+                    raw_moto_no = bind_m_no.strip().replace("機車位", "").replace("(", "").replace(")", "").strip()
+                    
+                    if raw_moto_no.endswith("4"):
+                        clean_m_str = "".join([c for c in raw_moto_no if c.isdigit()])
+                        if clean_m_str:
+                            m_val = int(clean_m_str)
+                            formatted_moto = f"{m_val - 1}-1"
+                        else:
+                            formatted_moto = raw_moto_no
+                    else:
+                        formatted_moto = raw_moto_no
+                    
+                    st.session_state.moto_space_mapping[bind_m_res] = formatted_moto
+                    save_binding_mapping("機車位綁定", st.session_state.moto_space_mapping)
+                    
+                    df_p_current = st.session_state.parking_data.copy()
+                    if not df_p_current.empty:
+                        df_cars_only = df_p_current[df_p_current["車位號碼"].str.contains("汽車", na=False)].copy()
+                        df_other_motos = df_p_current[(df_p_current["車位號碼"].str.contains("機車", na=False)) & (df_p_current["戶別"] != bind_m_res)].copy()
+                    else:
+                        df_cars_only = pd.DataFrame(columns=["流水號", "車位號碼", "戶別", "車牌號碼", "車主姓名", "連絡電話", "身分標記", "車輛備註", "登記日期"])
+                        df_other_motos = pd.DataFrame(columns=["流水號", "車位號碼", "戶別", "車牌號碼", "車主姓名", "連絡電話", "身分標記", "車輛備註", "登記日期"])
+                    
+                    new_moto_reg_row = {
+                        "車位號碼": f"機車位-{formatted_moto}",
+                        "戶別": bind_m_res,
+                        "車牌號碼": "",
+                        "車主姓名": f"住戶-{bind_m_res}",
+                        "連絡電話": "0900000000",
+                        "身分標記": "屋主",
+                        "車輛備註": "",
+                        "登記日期": datetime.date.today().strftime("%Y-%m-%d")
+                    }
+                    
+                    combined_park_df = pd.concat([df_cars_only, df_other_motos, pd.DataFrame([new_moto_reg_row])], ignore_index=True)
+                    combined_park_df["流水號"] = range(1, len(combined_park_df) + 1)
+                    
+                    if save_parking_ledger(combined_park_df):
+                        st.session_state.parking_data = combined_park_df
+                        st.success(f"🎉 雲端與車位登記同步成功：戶別 **{bind_m_res}** 成功綁定機車位 **{formatted_moto}**（預設為無車牌空位）！")
+                        time.sleep(1)
+                        st.rerun()
+
+        if st.session_state.moto_space_mapping:
+            st.markdown("#### 📋 目前雲端已建立的機車位綁定清單：")
+            moto_map_df = pd.DataFrame(list(st.session_state.moto_space_mapping.items()), columns=["戶別", "車位編號"])
+            st.dataframe(moto_map_df[moto_map_df["車位編號"] != ""], use_container_width=True, hide_index=True)
 
 # ==========================================
 # 頁籤 3：⚙️ 常駐名冊與機車抽籤管理
 # ==========================================
-elif menu == "⚙️ 常駐名冊與機車抽籤管理":
-    st.header("⚙️ 常駐戶別名冊與機車位抽籤管理")
-    st.info("💡 在此可進行常駐戶別設定、管理服務帳號常態清單，或執行機車位抽籤流程。")
+else:
+    st.header("⚙️ 物業後台核心常駐清單與年度機車位隨機抽籤")
+    tab_set1, tab_set2 = st.tabs(["📝 基礎名冊與公設排除設定", "🏍️ 112戶年度機車位隨機抽籤與雲端同步"])
     
-    st.subheader("📋 目前系統常駐住戶總覽")
-    st.write(f"目前共計有 **{len(st.session_state.resident_list)}** 個住戶戶別。")
-    st.write(", ".join(st.session_state.resident_list))
+    with tab_set1:
+        col_set1, col_set2 = st.columns(2)
+        
+        with col_set1:
+            st.markdown("#### 📝 常用項目/摘要維護")
+            new_item = st.text_input("➕ 增加常用項目：", key="backend_add_item")
+            if st.button("確認增加項目", key="btn_add_item") and new_item.strip():
+                if new_item.strip() not in st.session_state.common_items:
+                    st.session_state.common_items.append(new_item.strip())
+                    st.toast(f"已新增項目: {new_item.strip()}", icon="📝")
+                    time.sleep(0.5)
+                    st.rerun()
+            del_item = st.selectbox("➖ 刪除常用項目：", ["請選擇要刪除的項目..."] + st.session_state.common_items, key="backend_del_item")
+            if st.button("確認刪除項目", key="btn_del_item") and del_item != "請選擇要刪除的項目...":
+                st.session_state.common_items.remove(del_item)
+                st.toast(f"已刪除項目: {del_item}", icon="🗑️")
+                time.sleep(0.5)
+                st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### 🏠 管理中心排除設定 (不參與機車抽籤)")
+            exclude_input = st.selectbox("選擇要排除參與機車抽籤的公設/管理戶別：", st.session_state.resident_list, index=0, key="exc_res_select")
+            if st.button("➕ 加入抽籤排除名單", key="add_exc_btn"):
+                if exclude_input not in st.session_state.lottery_excluded_res:
+                    st.session_state.lottery_excluded_res.append(exclude_input)
+                    st.success(f"🎉 戶別 {exclude_input} 已成功加入抽籤排除名單！")
+                    time.sleep(0.5)
+                    st.rerun()
+            
+            st.write(f"目前排除名單: `{st.session_state.lottery_excluded_res}`")
+            if st.button("🧹 清空排除名單 (恢復全部參與)", key="clear_exc_btn"):
+                st.session_state.lottery_excluded_res = []
+                st.success("🎉 已清空排除名單！")
+                time.sleep(0.5)
+                st.rerun()
+                
+        with col_set2:
+            st.markdown("#### 👤 經手人名冊維護")
+            new_handler = st.text_input("➕ 增加經手人員(職稱-人員)：", key="backend_add_handler")
+            if st.button("確認增加經手人", key="btn_add_handler") and new_handler.strip():
+                if new_handler.strip() not in st.session_state.common_handlers:
+                    st.session_state.common_handlers.append(new_handler.strip())
+                    st.toast(f"已上架新經手人: {new_handler.strip()}", icon="👤")
+                    time.sleep(0.5)
+                    st.rerun()
+            del_handler = st.selectbox("➖ 刪除特定經手人：", ["請選擇要刪除的經手人..."] + st.session_state.common_handlers, key="backend_del_handler")
+            if st.button("確認刪除經手人", key="btn_del_handler") and del_handler != "請選擇要刪除的經手人...":
+                st.session_state.common_handlers.remove(del_handler)
+                st.toast(f"已撤銷經手人: {del_handler}", icon="🗑️")
+                time.sleep(0.5)
+                st.rerun()
+
+    with tab_set2:
+        st.markdown("### 🎲 112 戶年度機車位隨機抽籤模組 (智慧保留現有車牌與身分)")
+        st.markdown("""
+        <div class="highlight-box">
+            📌 <b>抽籤規則與隱私說明</b>：<br>
+            1. 系統自動過濾排除名單（如 <b>1A 管理中心</b>），僅對純住戶進行隨機洗牌。<br>
+            2. 機車位編號為純數字 <b>1 到 112 號</b>。<br>
+            3. 只有當<b>尾數為 4</b> 的數字才會自動以「<b>前一個數字-1</b>」表示。<br>
+            4. <b>智慧保留機制</b>：重新抽籤時，若該住戶原本已登記有車牌號碼，<b>系統將自動對應並完美保留原車牌、車主資訊與身分標記</b>！
+        </div>
+        """, unsafe_allow_html=True)
+        
+        active_participants = [res for res in st.session_state.resident_list if res not in st.session_state.lottery_excluded_res]
+        max_moto_slots = st.session_state.parking_capacities["機車位"]
+        
+        valid_moto_spaces = []
+        for i in range(1, max_moto_slots + 1):
+            s_str = str(i)
+            if s_str.endswith("4"):
+                converted_num = f"{i-1}-1"
+                valid_moto_spaces.append(f"{converted_num}")
+            else:
+                valid_moto_spaces.append(f"{i}")
+            
+        st.info(f"💡 實際參與抽籤戶數：{len(active_participants)} 戶 | 機車位總格數：{len(valid_moto_spaces)} 格")
+        
+        if st.button("🎲 開始執行年度機車位隨機抽籤", type="primary", key="run_moto_lottery_btn"):
+            if not active_participants:
+                st.error("❌ 【防呆阻擋】參與抽籤名單為空！")
+            elif len(active_participants) > len(valid_moto_spaces):
+                st.error(f"❌ 【名額超載阻擋】參與抽籤戶數大於機車格總數！")
+            else:
+                shuffled_spaces = valid_moto_spaces.copy()
+                random.shuffle(shuffled_spaces)
+                
+                existing_moto_info = {}
+                df_park_current = st.session_state.parking_data.copy()
+                if not df_park_current.empty:
+                    old_motos = df_park_current[df_park_current["車位號碼"].str.contains("機車", na=False)]
+                    for _, row in old_motos.iterrows():
+                        res = str(row["戶別"]).strip()
+                        space_full = str(row["車位號碼"]).strip()
+                        old_space_no = space_full.replace("機車位-", "").replace("機車位", "").strip()
+                        
+                        plate_val = format_plate_number(str(row["車牌號碼"]))
+                        existing_moto_info[res] = {
+                            "舊車位編號": old_space_no if old_space_no else "無",
+                            "車牌號碼": plate_val,
+                            "車主姓名": str(row["車主姓名"]).strip() if pd.notna(row["車主姓名"]) else f"住戶-{res}",
+                            "連絡電話": str(row["連絡電話"]).strip() if pd.notna(row["連絡電話"]) else "0900000000",
+                            "身分標記": str(row["身分標記"]).strip() if "身分標記" in row and pd.notna(row["身分標記"]) else "屋主",
+                            "車輛備註": str(row["車輛備註"]).strip() if "車輛備註" in row and pd.notna(row["車輛備註"]) else ""
+                        }
+
+                lottery_results = []
+                moto_mapping_updates = {}
+                
+                for i, res in enumerate(active_participants):
+                    assigned_space = shuffled_spaces[i]
+                    moto_mapping_updates[res] = assigned_space
+                    
+                    old_space = existing_moto_info.get(res, {}).get("舊車位編號", st.session_state.moto_space_mapping.get(res, "無"))
+                    if not old_space:
+                        old_space = "無"
+
+                    if res in existing_moto_info and existing_moto_info[res]["車牌號碼"] != "":
+                        saved_plate = existing_moto_info[res]["車牌號碼"]
+                        saved_name = existing_moto_info[res]["車主姓名"]
+                        saved_phone = existing_moto_info[res]["連絡電話"]
+                        saved_tag = existing_moto_info[res]["身分標記"]
+                        saved_memo = existing_moto_info[res]["車輛備註"]
+                    else:
+                        saved_plate = ""
+                        saved_name = f"住戶-{res}"
+                        saved_phone = "0900000000"
+                        saved_tag = "屋主"
+                        saved_memo = ""
+                        
+                    lottery_results.append({
+                        "戶別": res,
+                        "舊的車位編號": old_space,
+                        "新的車位編號": assigned_space,
+                        "車位號碼": f"機車位-{assigned_space}",
+                        "車牌號碼": saved_plate,   
+                        "車主姓名": saved_name,
+                        "連絡電話": saved_phone,
+                        "身分標記": saved_tag,
+                        "車輛備註": saved_memo,
+                        "登記日期": datetime.date.today().strftime("%Y-%m-%d")
+                    })
+                
+                st.session_state.temp_moto_mapping_updates = moto_mapping_updates
+                st.session_state.temp_lottery_df = pd.DataFrame(lottery_results)
+                st.success("🎉 機車抽籤模擬完成！請於下方確認新舊車位對照無誤後，再點擊按鈕同步至雲端。")
+
+        if 'temp_lottery_df' in st.session_state and not st.session_state.temp_lottery_df.empty:
+            st.markdown("#### 📋 本次抽籤結果預覽 (新舊車位對照)：")
+            
+            df_preview_clean = st.session_state.temp_lottery_df[["戶別", "舊的車位編號", "新的車位編號"]].copy()
+            st.dataframe(df_preview_clean, use_container_width=True, hide_index=True)
+            
+            if st.button("☁️ 確認無誤，一鍵更新並覆蓋雲端機車位資料庫", type="primary", key="sync_moto_to_cloud_btn"):
+                if 'temp_moto_mapping_updates' in st.session_state:
+                    st.session_state.moto_space_mapping.update(st.session_state.temp_moto_mapping_updates)
+                    save_binding_mapping("機車位綁定", st.session_state.moto_space_mapping)
+
+                df_park_current = st.session_state.parking_data.copy()
+                
+                if not df_park_current.empty:
+                    df_cars_only = df_park_current[df_park_current["車位號碼"].str.contains("汽車", na=False)].copy()
+                else:
+                    df_cars_only = pd.DataFrame(columns=["流水號", "車位號碼", "戶別", "車牌號碼", "車主姓名", "連絡電話", "身分標記", "車輛備註", "登記日期"])
+                
+                new_moto_df = st.session_state.temp_lottery_df[["車位號碼", "戶別", "車牌號碼", "車主姓名", "連絡電話", "身分標記", "車輛備註", "登記日期"]].copy()
+                
+                combined_df = pd.concat([df_cars_only, new_moto_df], ignore_index=True)
+                combined_df["流水號"] = range(1, len(combined_df) + 1)
+                
+                with st.spinner("正在將年度抽籤結果同步寫入雲端試算表..."):
+                    if save_parking_ledger(combined_df):
+                        st.session_state.parking_data = combined_df
+                        st.success("🎉 恭喜！機車位抽籤結果已成功同步至雲端，且原有車主的車牌、身分與備註均已完美保留！")
+                        time.sleep(1)
+                        st.rerun()
+# 重新整理
