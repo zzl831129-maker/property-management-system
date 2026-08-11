@@ -1,5 +1,8 @@
 import os
+from dotenv import load_dotenv
 import google.generativeai as genai
+
+load_dotenv()
 
 from tools.ledger_tool import (
     get_ledger_balance,
@@ -35,6 +38,13 @@ TOOLS_LIST = [
 
 def get_ai_response(user_text: str) -> str:
     try:
+        # 第一階段測試：
+        # 只要使用者提到「零用金」，直接查詢 1A
+        # 暫時繞過 Gemini，確認 Google Sheet 查詢功能是否正常
+        if "零用金" in user_text:
+            return str(get_ledger_balance("1A"))
+
+        # 其他問題才交給 Gemini
         model = genai.GenerativeModel(
             model_name=GEMINI_MODEL,
             tools=TOOLS_LIST,
@@ -45,11 +55,21 @@ def get_ai_response(user_text: str) -> str:
                 "回答請簡潔、清楚並使用繁體中文。"
             ),
         )
-        chat = model.start_chat(enable_automatic_function_calling=True)
+
+        chat = model.start_chat(
+            enable_automatic_function_calling=True
+        )
+
         response = chat.send_message(user_text)
+
         return response.text or "查詢已完成，但 AI 沒有產生文字回覆。"
+
     except Exception as exc:
+        print(f"LINE Agent Error: {exc}")
+
         message = str(exc).lower()
+
         if "429" in message or "quota" in message or "rate limit" in message:
-            return "⚠️ AI 查詢額度目前已達限制，請稍後再試。資料本身沒有遺失，這是 AI API 的暫時限制。"
-        return "⚠️ LINE Agent 暫時無法完成查詢，請稍後再試。"
+            return "⚠️ AI 查詢額度目前已達限制，請稍後再試。"
+
+        return f"⚠️ LINE Agent 查詢失敗：{exc}"
