@@ -450,3 +450,5 @@ def get_ai_response(user_text: str, context_resident_id: str | None = None) -> s
             return "⚠️ Google Sheet 權限不足，請確認試算表已分享給 Service Account。"
 
         return f"⚠️ LINE Agent 查詢失敗：{type(exc).__name__}：{exc}"
+
+print("Router module ready")

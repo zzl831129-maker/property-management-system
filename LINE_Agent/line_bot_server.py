@@ -20,9 +20,43 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
-from agent.router import get_ai_response
 
 app = Flask(__name__)
+
+# ============================================================
+# Lazy Load Router
+# ============================================================
+
+_router_get_ai_response = None
+_router_import_error = None
+
+
+def _get_router_handler():
+    """
+    延遲載入 agent.router。
+    目的：讓 Flask/Gunicorn 先完成啟動與綁定 PORT，
+    避免 Render 部署時因 Gemini / Google Sheet 模組初始化較慢而 timeout。
+    """
+    global _router_get_ai_response, _router_import_error
+
+    if _router_get_ai_response is not None:
+        return _router_get_ai_response
+
+    if _router_import_error is not None:
+        raise RuntimeError(
+            f"Router 載入失敗：{_router_import_error}"
+        )
+
+    try:
+        from agent.router import get_ai_response as handler
+        _router_get_ai_response = handler
+        print("Router lazy-loaded successfully")
+        return _router_get_ai_response
+    except Exception as exc:
+        _router_import_error = f"{type(exc).__name__}: {exc}"
+        print("Router lazy-load failed:", _router_import_error)
+        raise
+
 
 LINE_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
@@ -532,6 +566,11 @@ def health():
     return "PropertyAI LINE Agent is running", 200
 
 
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}, 200
+
+
 @app.post("/callback")
 def callback():
     signature = request.headers.get("X-Line-Signature")
@@ -568,7 +607,8 @@ def handle_message(event):
         # 但是否真正更新記憶，要等確認這是一個住戶查詢後再決定。
         query_context_resident_id = explicit_resident_id or context_resident_id
 
-        reply_text = get_ai_response(
+        router_handler = _get_router_handler()
+        reply_text = router_handler(
             user_text,
             context_resident_id=query_context_resident_id,
         )
