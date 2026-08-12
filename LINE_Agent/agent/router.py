@@ -25,6 +25,8 @@ from tools.parking_tool import (
     search_parking_by_space,
     search_parking_by_phone,
     search_parking_registry,
+    search_parking_by_owner,
+    get_resident_vehicle_count,
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -42,16 +44,9 @@ TOOLS_LIST = [
     get_overdrawn_residents,
     get_parking_info,
     get_parking_asset_summary,
-    get_third_car_residents,
-    get_tenant_parking_summary,
-    get_resident_overview_ledger,
-    get_resident_overview_parking,
-    search_parking_by_plate,
-    search_parking_by_space,
-    search_parking_by_phone,
     search_parking_registry,
+    search_parking_by_owner,
 ]
-
 
 def _normalize_text(text: str) -> str:
     text = str(text or "").strip().replace("　", " ")
@@ -162,6 +157,47 @@ def _extract_space_keyword(text: str):
             return m.group(1).strip()
     return None
 
+
+def _extract_owner_keyword(text: str):
+    """抓常見姓名反查句型：查車主王小明 / 王小明的車。"""
+    patterns = [
+        r"(?:查|查詢|找)?車主[：:\s]*([^\s，。！？?]{2,12})",
+        r"([^\s，。！？?]{2,12})的(?:車|車位|車輛)",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text)
+        if m:
+            candidate = m.group(1).strip()
+            if not re.search(r"\d+[A-Za-z]|機車位|汽車位|車牌", candidate, re.I):
+                return candidate
+    return None
+
+
+def _is_vehicle_count_query(text: str) -> bool:
+    return _contains_any(text, [
+        "幾台車", "幾台", "多少台車", "多少台",
+        "有幾台", "登記幾台", "車輛數", "車子數",
+    ])
+
+
+def _is_balance_query(text: str) -> bool:
+    return _contains_any(text, [
+        "零用金", "餘額", "余额", "剩多少", "剩下多少",
+        "還有多少", "还有多少", "還剩多少", "剩多少錢",
+        "還有多少錢", "還剩多少錢", "餘款", "余款",
+        "目前多少錢", "現在多少錢", "還有錢嗎", "錢剩多少",
+    ])
+
+
+def _is_parking_query(text: str) -> bool:
+    return _contains_any(text, [
+        "車位", "车位", "車牌", "车牌", "車輛", "车辆",
+        "停車", "停车", "停哪", "停在哪", "停哪裡",
+        "哪個車位", "哪一个车位", "汽車", "機車", "汽车", "机车",
+        "有哪些車", "有什麼車", "有哪幾台車",
+    ])
+
+
 def _is_resident_overview_query(text: str, resident_id: str | None) -> bool:
     """判斷「查1A / 1A資料 / 1A資訊 / 查詢1A住戶」等整合查詢。"""
     if not resident_id:
@@ -210,27 +246,60 @@ def _route_direct_query(user_text: str):
     target_date = _extract_date(text)
     target_month = _extract_month(text)
 
-    # 反向搜尋：優先走 Python DIRECT，不交給 Gemini
+    # ========================================================
+    # 1. 反向搜尋：車位 / 車牌 / 電話 / 車主
+    #    這些都走 Python DIRECT，不浪費 Gemini
+    # ========================================================
     phone = _extract_phone(text)
-    if phone and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "電話", "手機", "聯絡"]):
-        print("Direct Reverse Search: PHONE", phone)
+    if phone and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "電話", "手機", "聯絡", "查", "找"]):
         return str(search_parking_by_phone(phone))
 
-    plate = _extract_plate(text)
-    if plate and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "車", "車牌", "查", "找"]):
-        print("Direct Reverse Search: PLATE", plate)
-        return str(search_parking_by_plate(plate))
-
     space = _extract_space_keyword(text)
-    if space and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "車位", "停", "查", "找"]):
-        print("Direct Reverse Search: SPACE", space)
+    if space and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "車位", "停", "查", "找", "使用"]):
         return str(search_parking_by_space(space))
 
-    # 住戶整合查詢：查1A / 1A資料 / 查詢1A住戶
-    if _is_resident_overview_query(text, resident_id):
-        return _get_resident_overview(resident_id)
+    plate = _extract_plate(text)
+    if plate and not resident_id and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "車", "車牌", "查", "找", "哪裡"]):
+        return str(search_parking_by_plate(plate))
 
-    # 車位管理型查詢
+    owner_keyword = _extract_owner_keyword(text)
+    if owner_keyword and _contains_any(text, ["車主", "的車", "車位", "車輛"]):
+        return str(search_parking_by_owner(owner_keyword))
+
+    # ========================================================
+    # 2. 單戶自然語言
+    # ========================================================
+    if resident_id:
+        # 「2A有幾台車」
+        if _is_vehicle_count_query(text):
+            return str(get_resident_vehicle_count(resident_id))
+
+        # 指定日期 + 單戶交易
+        if target_date and _contains_any(text, [
+            "零用金", "明細", "交易", "收支", "收入", "支出", "紀錄", "記錄",
+            "花了什麼", "今天花", "今天收",
+        ]):
+            return str(get_resident_daily_detail(resident_id, target_date))
+
+        # 「2A還剩多少錢」
+        if _is_balance_query(text):
+            return str(get_ledger_balance(resident_id))
+
+        # 「2D停哪裡 / 2A有哪些車」
+        if _is_parking_query(text):
+            return str(get_parking_info(resident_id))
+
+        # 單純「查2A / 2A資料 / 2A現在狀況」
+        if _is_resident_overview_query(text, resident_id):
+            return _get_resident_overview(resident_id)
+
+        # 口語但只有戶別：例如「幫我看一下2A」
+        if _contains_any(text, ["幫我看", "看一下", "查一下", "查查看", "資料", "資訊", "狀況", "情況"]):
+            return _get_resident_overview(resident_id)
+
+    # ========================================================
+    # 3. 車位管理型查詢
+    # ========================================================
     if _contains_any(text, [
         "第三台車", "第3台車", "三台車", "3台車",
         "三車戶", "3車戶", "三台以上", "3台以上",
@@ -238,7 +307,7 @@ def _route_direct_query(user_text: str):
     ]):
         return str(get_third_car_residents())
 
-    if "租客" in text and _contains_any(text, ["車", "車位", "車輛", "停車", "停哪"]):
+    if "租客" in text and _contains_any(text, ["車", "車位", "車輛", "停車", "停哪", "幾台"]):
         return str(get_tenant_parking_summary())
 
     if _contains_any(text, [
@@ -248,11 +317,13 @@ def _route_direct_query(user_text: str):
     ]):
         return str(get_parking_asset_summary())
 
-    # 零用金管理型查詢
+    # ========================================================
+    # 4. 零用金管理型查詢
+    # ========================================================
     if _contains_any(text, [
         "透支戶", "透支住戶", "零用金透支", "負數戶",
         "負餘額", "餘額負數", "欠款戶", "哪些戶透支",
-        "誰透支", "哪些戶負數", "誰是負數",
+        "誰透支", "哪些戶負數", "誰是負數", "誰欠錢",
     ]):
         return str(get_overdrawn_residents())
 
@@ -270,53 +341,28 @@ def _route_direct_query(user_text: str):
     ]) and not resident_id:
         return str(get_ledger_summary(target_date=target_date))
 
-    # 單戶零用金指定日期明細
-    if resident_id and target_date and _contains_any(text, [
-        "零用金", "明細", "交易", "收支", "收入", "支出", "紀錄", "記錄",
-    ]):
-        return str(get_resident_daily_detail(resident_id, target_date))
-
-    # 單戶零用金餘額
-    ledger_words = [
-        "零用金", "餘額", "余额", "剩多少", "剩下多少",
-        "還有多少", "还有多少", "還剩多少", "剩多少錢",
-        "還有多少錢", "還剩多少錢", "餘款", "余款",
-        "目前多少錢", "現在多少錢",
-    ]
-    if resident_id and _contains_any(text, ledger_words):
-        return str(get_ledger_balance(resident_id))
-
-    # 單戶車位 / 車牌 / 車輛
-    parking_words = [
-        "車位", "车位", "車牌", "车牌", "車輛", "车辆",
-        "停車", "停车", "停哪", "停在哪", "停哪裡",
-        "哪個車位", "哪一个车位", "汽車", "機車", "汽车", "机车",
-    ]
-    if resident_id and _contains_any(text, parking_words):
-        return str(get_parking_info(resident_id))
-
-    # 防呆
-    if _contains_any(text, [
-        "零用金", "餘額", "剩多少", "剩下多少", "還有多少", "還剩多少", "餘款",
-    ]) and not resident_id:
+    # ========================================================
+    # 5. 防呆
+    # ========================================================
+    if _is_balance_query(text) and not resident_id:
         if _contains_any(text, ["日結", "當日結算", "每日結算"]):
             return "請提供日期，例如：查詢 2026-08-12 零用金日結。"
         if _contains_any(text, ["月結", "月結算", "每月結算"]):
             return "請提供月份，例如：查詢 2026-08 零用金月結。"
         return "請提供戶別，例如：查詢 1A 零用金。"
 
-    if _contains_any(text, ["車位", "車牌", "車輛", "停車", "停哪", "汽車", "機車"]) and not resident_id:
-        return "請提供戶別、車牌或車位，例如：查詢 2A 車位、BQV9969是誰的車、B3-33是哪一戶。"
+    if _is_parking_query(text) and not resident_id:
+        return "請提供戶別、車牌或車位，例如：查 2A 車位、BQV9969是誰的車、機車位23-1是誰的。"
 
+    # 沒命中才交給 Gemini
     return None
-
 
 def _ask_gemini(user_text: str) -> str:
     model = genai.GenerativeModel(
         model_name=GEMINI_MODEL,
         tools=TOOLS_LIST,
         system_instruction=(
-            "你是 SmartProp 社區物業管理 AI 查詢助理。"
+            "你是 SmartProp 社區物業管理 AI 查詢助理。你只處理 Python Router 無法直接判斷的自然語言問題。"
             "你的主要資料來源是系統提供的零用金與車位工具。"
             "只要問題涉及住戶零用金、交易、車位、車牌、租客車輛、聯絡電話或社區統計，"
             "必須優先使用工具取得真實資料，不可自行猜測或編造。"
