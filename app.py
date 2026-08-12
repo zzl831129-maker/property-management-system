@@ -4,6 +4,7 @@
 """
 
 import streamlit as st
+import os
 import pandas as pd
 import plotly.express as px
 import datetime
@@ -28,14 +29,48 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏢 社區物業智慧管理系統")
-st.caption("✨7/29")
+st.caption("✨ SmartProp Web Console")
+st.caption(f"☁️ 目前資料來源：{DATA_SOURCE_LABEL}")
 
 # ==========================================
 # 🔌 Google Sheets 雲端連線實體大腦
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/18DI3Lpyk8R5pT_3K7B4oLLK_vsHYuWh2JXRP8MLyGQM/edit"
-SPREADSHEET_NAME = SPREADSHEET_URL  
+
+# ============================================================
+# SmartProp 資料來源設定
+# ============================================================
+# 新版：LINE Agent 目前使用的新 Google Sheet
+PRIMARY_SPREADSHEET_URL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1tgxjrFn5uZ0-InGARzwsRGxNMsUfMKg2Fp7B36Y5vY4/edit"
+)
+
+# 舊版：保留緊急回復用
+LEGACY_SPREADSHEET_URL = (
+    "https://docs.google.com/spreadsheets/d/"
+    "18DI3Lpyk8R5pT_3K7B4oLLK_vsHYuWh2JXRP8MLyGQM/edit"
+)
+
+# Render 可用 Environment Variable 覆蓋，不必再改程式碼：
+# SMARTPROP_SPREADSHEET_URL=<Google Sheet URL>
+# SMARTPROP_USE_LEGACY_SHEET=true  -> 立即切回舊資料庫
+_env_sheet_url = os.getenv("SMARTPROP_SPREADSHEET_URL", "").strip()
+_use_legacy_sheet = os.getenv("SMARTPROP_USE_LEGACY_SHEET", "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+
+if _use_legacy_sheet:
+    SPREADSHEET_URL = LEGACY_SPREADSHEET_URL
+    DATA_SOURCE_LABEL = "舊版 Google Sheet（Rollback）"
+elif _env_sheet_url:
+    SPREADSHEET_URL = _env_sheet_url
+    DATA_SOURCE_LABEL = "Render Environment 指定 Google Sheet"
+else:
+    SPREADSHEET_URL = PRIMARY_SPREADSHEET_URL
+    DATA_SOURCE_LABEL = "SmartProp / LINE Agent 共用 Google Sheet"
+
+SPREADSHEET_NAME = SPREADSHEET_URL
 
 def generate_default_units():
     units = []
@@ -153,6 +188,22 @@ def save_binding_mapping(worksheet_name, mapping_dict):
         st.error(f"❌ 寫入 {worksheet_name} 失敗: {e}")
         return False
 
+def refresh_all_cloud_data(show_message=True):
+    """強制重新讀取 Google Sheet，避免 LINE / 網頁跨系統更新後畫面仍停留舊快取。"""
+    try:
+        st.session_state.ledger_data = load_cloud_ledger()
+        st.session_state.parking_data = load_parking_ledger()
+        st.session_state.car_space_mapping = load_binding_mapping("汽車位綁定")
+        st.session_state.moto_space_mapping = load_binding_mapping("機車位綁定")
+        if show_message:
+            st.toast("☁️ 已重新同步 SmartProp 雲端資料", icon="🔄")
+        return True
+    except Exception as exc:
+        if show_message:
+            st.error(f"❌ 雲端重新同步失敗：{exc}")
+        return False
+
+
 def format_plate_number(plate_str):
     p = str(plate_str).strip().upper().replace(" ", "").replace("-", "").replace("_", "")
     if not p or p in ["NAN", "NONE", "NULL"]:
@@ -206,8 +257,28 @@ if 'ledger_data' not in st.session_state or 'parking_data' not in st.session_sta
         st.session_state.parking_data = load_parking_ledger()
         status.update(label="✅ 雙核心數據庫無損同步成功！", state="complete")
 
+# LINE Agent 與 Web 共用 Google Sheet 時，提供手動強制刷新。
+# 因 Streamlit session_state 會保留本次工作階段資料，
+# 若 LINE / Google Sheet 在外部產生異動，可按此鈕立即同步。
+sync_col1, sync_col2 = st.columns([1, 4])
+with sync_col1:
+    if st.button("🔄 同步最新雲端資料", use_container_width=True, key="refresh_cloud_data_btn"):
+        if refresh_all_cloud_data(show_message=True):
+            st.rerun()
+with sync_col2:
+    st.caption("LINE / Google Sheet 有新異動時，可按此按鈕立即重新載入；避免網頁仍顯示本次工作階段的舊資料。")
+
 INITIAL_CASH = 0
 today_dt = datetime.date.today()
+
+with st.sidebar:
+    st.markdown("### ☁️ SmartProp 資料核心")
+    st.write(DATA_SOURCE_LABEL)
+    if _use_legacy_sheet:
+        st.warning("目前為 Rollback 舊資料庫模式")
+    else:
+        st.success("目前使用新版共用資料庫")
+    st.caption("若需回復舊版：Render Environment 設定 SMARTPROP_USE_LEGACY_SHEET=true")
 
 menu = st.radio(
     "🛠️ 請選擇主要功能：", 
