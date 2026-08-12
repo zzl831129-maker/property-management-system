@@ -30,7 +30,6 @@ st.markdown("""
 
 st.title("🏢 社區物業智慧管理系統")
 st.caption("✨ SmartProp Web Console")
-st.caption(f"☁️ 目前資料來源：{DATA_SOURCE_LABEL}")
 
 # ==========================================
 # 🔌 Google Sheets 雲端連線實體大腦
@@ -71,6 +70,9 @@ else:
     DATA_SOURCE_LABEL = "SmartProp / LINE Agent 共用 Google Sheet"
 
 SPREADSHEET_NAME = SPREADSHEET_URL
+
+# 到這裡 DATA_SOURCE_LABEL 才已完成初始化
+st.caption(f"☁️ 目前資料來源：{DATA_SOURCE_LABEL}")
 
 def generate_default_units():
     units = []
