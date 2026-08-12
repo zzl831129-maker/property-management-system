@@ -43,7 +43,7 @@ def get_parking_info(resident_id: str):
         space = _clean(row.get("車位號碼"))
         plate = _clean(row.get("車牌號碼"))
         owner = _clean(row.get("車主姓名"))
-        phone = _clean(row.get("連絡電話"))
+        phone = _format_phone(row.get("連絡電話"))
         identity = _clean(row.get("身分標記"))
         note = _clean(row.get("車輛備註"), default="")
         icon = _vehicle_icon(space)
@@ -132,12 +132,28 @@ def _normalize_phone(value):
     return digits[-9:] if len(digits) >= 9 else digits
 
 
+def _format_phone(value):
+    """顯示用：補回台灣手機前導 0，並格式化為 09xx-xxx-xxx。"""
+    raw = str(value if value is not None else "").strip()
+    # gspread / pandas 有時可能把數字欄位帶成 968524099.0
+    raw = re.sub(r"\.0$", "", raw)
+    digits = re.sub(r"\D", "", raw)
+
+    if len(digits) == 9 and digits.startswith("9"):
+        digits = "0" + digits
+
+    if len(digits) == 10 and digits.startswith("09"):
+        return f"{digits[:4]}-{digits[4:7]}-{digits[7:]}"
+
+    return raw if raw else "—"
+
+
 def _format_parking_result(row):
     resident = _clean(row.get("戶別"))
     space = _clean(row.get("車位號碼"))
     plate = _clean(row.get("車牌號碼"))
     owner = _clean(row.get("車主姓名"))
-    phone = _clean(row.get("連絡電話"))
+    phone = _format_phone(row.get("連絡電話"))
     identity = _clean(row.get("身分標記"))
     icon = _vehicle_icon(space)
 
@@ -173,7 +189,7 @@ def search_parking_by_plate(plate: str):
 
 
 def search_parking_by_space(space_keyword: str):
-    """輸入車位代碼/名稱反查戶別與車輛資料。"""
+    """輸入車位代碼/名稱反查戶別與車輛資料；完整車位優先精確匹配。"""
     df = _parking_df()
     if df.empty:
         return "📭 目前無車位登記資料。"
@@ -182,23 +198,38 @@ def search_parking_by_space(space_keyword: str):
     if not raw:
         return "請提供車位，例如：B3-33、機車位23-1。"
 
-    normalized = re.sub(r"[\s()（）_\-]", "", raw).upper()
-
     def norm_space(value):
-        return re.sub(r"[\s()（）_\-]", "", str(value or "")).upper()
+        text = str(value or "").strip().upper()
+        # 統一全形括號、空白與底線；保留「-」以避免 23-1 被誤判成 23 或 2
+        text = text.replace("（", "(").replace("）", ")")
+        text = re.sub(r"[\s_]", "", text)
+        return text
 
-    # 允許 B3-33 對應「汽車位(B3)33」，也允許完整名稱查詢
-    matches = df[
-        df["車位號碼"].astype(str).apply(
-            lambda x: normalized in norm_space(x) or norm_space(x) in normalized
-        )
-    ]
+    def canonical_space(value):
+        text = norm_space(value)
+
+        # 汽車位(B3)33 / 汽車位B3-33 / B3-33 -> B3-33
+        car = re.search(r"(?:汽車位)?\(?B([123])\)?-?(\d+)$", text)
+        if car:
+            return f"B{car.group(1)}-{car.group(2)}"
+
+        # 機車位23-1 必須保留完整 23-1
+        moto = re.search(r"(?:機車位)?(\d+(?:-\d+)?)$", text)
+        if "機車" in text and moto:
+            return f"機車位{moto.group(1)}"
+
+        return text
+
+    target = canonical_space(raw)
+    normalized_series = df["車位號碼"].astype(str).apply(canonical_space)
+
+    # 第一優先：完整、精確車位比對。找到就直接回傳，不做包含搜尋。
+    matches = df[normalized_series == target]
 
     if matches.empty:
         return f"🔎 查無車位「{space_keyword}」的登記資料。"
 
     return "\n\n".join(_format_parking_result(row) for _, row in matches.iterrows())
-
 
 def search_parking_by_phone(phone: str):
     """輸入聯絡電話反查戶別與車輛資料。"""
