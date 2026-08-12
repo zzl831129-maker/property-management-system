@@ -1,3 +1,4 @@
+import re
 import os
 import pandas as pd
 from services.google_sheet import get_sheet_data
@@ -120,4 +121,122 @@ def get_tenant_parking_summary():
 def get_resident_overview_parking(resident_id: str):
     """住戶整合查詢用：回傳該戶車位資訊。"""
     return get_parking_info(resident_id)
+
+def _normalize_plate(value):
+    return re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+
+
+def _normalize_phone(value):
+    digits = re.sub(r"\D", "", str(value or ""))
+    # Google Sheet 若把台灣手機前導 0 吃掉，統一比對末 9 碼
+    return digits[-9:] if len(digits) >= 9 else digits
+
+
+def _format_parking_result(row):
+    resident = _clean(row.get("戶別"))
+    space = _clean(row.get("車位號碼"))
+    plate = _clean(row.get("車牌號碼"))
+    owner = _clean(row.get("車主姓名"))
+    phone = _clean(row.get("連絡電話"))
+    identity = _clean(row.get("身分標記"))
+    icon = _vehicle_icon(space)
+
+    return (
+        f"{icon}【反向查詢結果】\n"
+        f"戶別｜{resident}\n"
+        f"車位｜{space}\n"
+        f"車牌｜{plate}\n"
+        f"車主｜{owner}\n"
+        f"身分｜{identity}\n"
+        f"電話｜{phone}"
+    )
+
+
+def search_parking_by_plate(plate: str):
+    """輸入車牌反查戶別、車位、車主與聯絡資訊。"""
+    df = _parking_df()
+    if df.empty:
+        return "📭 目前無車位登記資料。"
+
+    target = _normalize_plate(plate)
+    if not target:
+        return "請提供有效車牌，例如：BQV9969。"
+
+    matches = df[
+        df["車牌號碼"].astype(str).apply(_normalize_plate) == target
+    ]
+
+    if matches.empty:
+        return f"🔎 查無車牌「{plate}」的登記資料。"
+
+    return "\n\n".join(_format_parking_result(row) for _, row in matches.iterrows())
+
+
+def search_parking_by_space(space_keyword: str):
+    """輸入車位代碼/名稱反查戶別與車輛資料。"""
+    df = _parking_df()
+    if df.empty:
+        return "📭 目前無車位登記資料。"
+
+    raw = str(space_keyword or "").strip()
+    if not raw:
+        return "請提供車位，例如：B3-33、機車位23-1。"
+
+    normalized = re.sub(r"[\s()（）_\-]", "", raw).upper()
+
+    def norm_space(value):
+        return re.sub(r"[\s()（）_\-]", "", str(value or "")).upper()
+
+    # 允許 B3-33 對應「汽車位(B3)33」，也允許完整名稱查詢
+    matches = df[
+        df["車位號碼"].astype(str).apply(
+            lambda x: normalized in norm_space(x) or norm_space(x) in normalized
+        )
+    ]
+
+    if matches.empty:
+        return f"🔎 查無車位「{space_keyword}」的登記資料。"
+
+    return "\n\n".join(_format_parking_result(row) for _, row in matches.iterrows())
+
+
+def search_parking_by_phone(phone: str):
+    """輸入聯絡電話反查戶別與車輛資料。"""
+    df = _parking_df()
+    if df.empty:
+        return "📭 目前無車位登記資料。"
+
+    target = _normalize_phone(phone)
+    if len(target) < 7:
+        return "請提供較完整的電話號碼。"
+
+    matches = df[
+        df["連絡電話"].astype(str).apply(_normalize_phone) == target
+    ]
+
+    if matches.empty:
+        return f"🔎 查無電話「{phone}」的車位登記資料。"
+
+    return "\n\n".join(_format_parking_result(row) for _, row in matches.iterrows())
+
+
+def search_parking_registry(keyword: str):
+    """
+    萬用反向查詢：
+    依序嘗試 車牌 -> 電話 -> 車位。
+    適合 Gemini Tool Calling。
+    """
+    text = str(keyword or "").strip()
+
+    if re.search(r"[A-Za-z].*\d|\d.*[A-Za-z]", text):
+        result = search_parking_by_plate(text)
+        if "查無車牌" not in result:
+            return result
+
+    if len(re.sub(r"\D", "", text)) >= 7:
+        result = search_parking_by_phone(text)
+        if "查無電話" not in result:
+            return result
+
+    return search_parking_by_space(text)
 
