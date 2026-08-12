@@ -13,12 +13,14 @@ from tools.ledger_tool import (
     get_ledger_summary,
     get_resident_daily_detail,
     get_overdrawn_residents,
+    get_resident_overview_ledger,
 )
 from tools.parking_tool import (
     get_parking_info,
     get_parking_asset_summary,
     get_third_car_residents,
     get_tenant_parking_summary,
+    get_resident_overview_parking,
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -38,6 +40,8 @@ TOOLS_LIST = [
     get_parking_asset_summary,
     get_third_car_residents,
     get_tenant_parking_summary,
+    get_resident_overview_ledger,
+    get_resident_overview_parking,
 ]
 
 
@@ -115,11 +119,58 @@ def _contains_any(text: str, keywords) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
+
+def _is_resident_overview_query(text: str, resident_id: str | None) -> bool:
+    """判斷「查1A / 1A資料 / 1A資訊 / 查詢1A住戶」等整合查詢。"""
+    if not resident_id:
+        return False
+
+    # 有明確功能詞時，交給原本的零用金/車位路由，不搶單。
+    specific_words = [
+        "零用金", "餘額", "余额", "收入", "支出", "收支", "交易", "明細",
+        "日結", "月結", "透支", "欠款",
+        "車位", "車牌", "車輛", "停車", "汽車", "機車",
+        "第三台車", "第3台車", "租客",
+    ]
+    if _contains_any(text, specific_words):
+        return False
+
+    compact = re.sub(r"\s+", "", text)
+    rid = re.escape(resident_id)
+
+    patterns = [
+        rf"^(?:查|查詢|查看|看|找)?{rid}$",
+        rf"^(?:查|查詢|查看|看|找)?{rid}(?:戶|住戶)?(?:資料|資訊|信息|狀況|情況|總覽|摘要)$",
+        rf"^(?:查|查詢|查看|看|找)(?:住戶|戶別)?{rid}(?:戶|住戶)?$",
+    ]
+    return any(re.fullmatch(pattern, compact, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _get_resident_overview(resident_id: str) -> str:
+    """整合零用金與車位，兩邊都直接讀 Google Sheet。"""
+    ledger_text = str(get_resident_overview_ledger(resident_id))
+    parking_text = str(get_resident_overview_parking(resident_id))
+
+    return (
+        f"🏢【{resident_id}｜住戶資訊總覽】\n"
+        "━━━━━━━━━━━━\n"
+        "💰 零用金\n"
+        f"{ledger_text}\n\n"
+        "🅿️ 車位 / 車輛\n"
+        f"{parking_text}\n"
+        "━━━━━━━━━━━━\n"
+        "📡 資料來源：Google Sheet 即時查詢"
+    )
+
 def _route_direct_query(user_text: str):
     text = _normalize_text(user_text)
     resident_id = _extract_resident_id(text)
     target_date = _extract_date(text)
     target_month = _extract_month(text)
+
+    # 住戶整合查詢：查1A / 1A資料 / 查詢1A住戶
+    if _is_resident_overview_query(text, resident_id):
+        return _get_resident_overview(resident_id)
 
     # 車位管理型查詢
     if _contains_any(text, [

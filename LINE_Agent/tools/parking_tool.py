@@ -116,3 +116,8 @@ def get_tenant_parking_summary():
     grouped = tenants.groupby("戶別").size().sort_values(ascending=False)
     lines = [f"{index}. {resident} 戶｜{count} 台" for index, (resident, count) in enumerate(grouped.items(), start=1)]
     return f"🔑【租客車輛清查｜共 {len(grouped)} 戶】\n━━━━━━━━━━━━\n" + "\n".join(lines)
+
+def get_resident_overview_parking(resident_id: str):
+    """住戶整合查詢用：回傳該戶車位資訊。"""
+    return get_parking_info(resident_id)
+

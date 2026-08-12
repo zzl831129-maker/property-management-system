@@ -159,3 +159,8 @@ def get_overdrawn_residents():
 
     lines = [f"{index}. {resident} 戶｜🔴 {_money(row['餘額'])}" for index, (resident, row) in enumerate(overdrawn.iterrows(), start=1)]
     return f"⚠️【零用金透支清查｜共 {len(overdrawn)} 戶】\n━━━━━━━━━━━━\n" + "\n".join(lines)
+
+def get_resident_overview_ledger(resident_id: str):
+    """住戶整合查詢用：回傳該戶零用金摘要。"""
+    return get_ledger_balance(resident_id)
+
