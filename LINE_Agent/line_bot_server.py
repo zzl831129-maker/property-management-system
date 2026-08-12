@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import threading
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -34,6 +36,104 @@ configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
 api_client = ApiClient(configuration)
 line_bot_api = MessagingApi(api_client)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+
+
+# ============================================================
+# LINE 使用者對話上下文
+# ============================================================
+
+SESSION_TTL_SECONDS = int(os.getenv("LINE_CONTEXT_TTL_SECONDS", "900"))
+_session_lock = threading.Lock()
+_user_sessions = {}
+
+
+def _line_user_key(event):
+    """取得 LINE 對話來源識別；user > group > room。"""
+    source = getattr(event, "source", None)
+    if source is None:
+        return "unknown"
+
+    for attr in ("user_id", "group_id", "room_id"):
+        value = getattr(source, attr, None)
+        if value:
+            return f"{attr}:{value}"
+
+    return "unknown"
+
+
+def _get_context_resident(user_key):
+    now = time.time()
+    with _session_lock:
+        session = _user_sessions.get(user_key)
+        if not session:
+            return None
+
+        if now - session.get("updated_at", 0) > SESSION_TTL_SECONDS:
+            _user_sessions.pop(user_key, None)
+            return None
+
+        return session.get("resident_id")
+
+
+def _set_context_resident(user_key, resident_id):
+    if not resident_id or user_key == "unknown":
+        return
+
+    with _session_lock:
+        _user_sessions[user_key] = {
+            "resident_id": resident_id,
+            "updated_at": time.time(),
+        }
+
+
+def _clear_context(user_key):
+    with _session_lock:
+        _user_sessions.pop(user_key, None)
+
+
+
+def _should_remember_resident_context(user_text, reply_text, explicit_resident_id):
+    """
+    只有真的在查某一戶時才記住上下文。
+    不因一般公告、寒暄、管理型統計而更新記憶。
+    """
+    text = str(user_text or "")
+    reply = str(reply_text or "")
+
+    # 明確輸入戶別，且內容看起來是在查該戶
+    resident_query_words = [
+        "查", "查詢", "查看", "看一下", "資料", "資訊", "住戶",
+        "零用金", "餘額", "交易", "明細",
+        "車位", "車牌", "車輛", "停哪", "幾台",
+    ]
+
+    if explicit_resident_id and any(word in text for word in resident_query_words):
+        return True
+
+    # 反向搜尋成功查到某一戶
+    if "【反向查詢結果】" in reply and "戶別｜" in reply:
+        return True
+
+    # 住戶總覽 / 單戶專項查詢成功
+    if any(tag in reply for tag in [
+        "｜住戶資訊總覽】",
+        "｜零用金摘要】",
+        "｜車位資訊",
+        "｜車輛統計】",
+    ]):
+        return True
+
+    return False
+
+
+def _is_context_clear_command(text):
+    compact = re.sub(r"\s+", "", text or "")
+    return compact in {
+        "清除上下文", "清除記憶", "清除记忆",
+        "重新開始", "重新开始", "重來", "重来",
+        "忘記剛剛", "忘记刚刚",
+    }
 
 
 # ============================================================
@@ -451,14 +551,48 @@ def callback():
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     user_text = event.message.text.strip()
+    user_key = _line_user_key(event)
 
-    reply_text = (
-        get_ai_response(user_text)
-        if user_text
-        else "請輸入要查詢的內容，例如：查 8A 零用金、查 8A 車位。"
-    )
+    if not user_text:
+        reply_text = "請輸入要查詢的內容，例如：查 8A 零用金、查 8A 車位。"
+        effective_user_text = user_text
+    elif _is_context_clear_command(user_text):
+        _clear_context(user_key)
+        reply_text = "✅ 已清除目前住戶對話上下文。"
+        effective_user_text = user_text
+    else:
+        explicit_resident_id = _extract_resident_id(user_text)
+        context_resident_id = _get_context_resident(user_key)
 
-    reply_message = _build_reply_message(user_text, reply_text)
+        # 明確輸入新戶別時，這一句查詢本身以新戶別為準；
+        # 但是否真正更新記憶，要等確認這是一個住戶查詢後再決定。
+        query_context_resident_id = explicit_resident_id or context_resident_id
+
+        reply_text = get_ai_response(
+            user_text,
+            context_resident_id=query_context_resident_id,
+        )
+
+        # 若本句沒戶別但使用了上下文，Flex 仍需要戶別才能正確產卡。
+        effective_user_text = user_text
+        if not explicit_resident_id and context_resident_id:
+            effective_user_text = f"{context_resident_id} {user_text}"
+
+        # 只有真正的住戶查詢成功後才更新上下文。
+        result_resident = _extract_resident_id(reply_text)
+        remembered_resident = explicit_resident_id or result_resident
+
+        if (
+            remembered_resident
+            and _should_remember_resident_context(
+                user_text,
+                reply_text,
+                explicit_resident_id,
+            )
+        ):
+            _set_context_resident(user_key, remembered_resident)
+
+    reply_message = _build_reply_message(effective_user_text, reply_text)
 
     line_bot_api.reply_message(
         ReplyMessageRequest(
@@ -466,6 +600,7 @@ def handle_message(event):
             messages=[reply_message],
         )
     )
+
 
 
 if __name__ == "__main__":

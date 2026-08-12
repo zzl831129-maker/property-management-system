@@ -379,21 +379,62 @@ def _ask_gemini(user_text: str) -> str:
     return response.text or "查詢已完成，但 AI 沒有產生文字回覆。"
 
 
-def get_ai_response(user_text: str) -> str:
+def get_ai_response(user_text: str, context_resident_id: str | None = None) -> str:
     try:
         text = _normalize_text(user_text)
         if not text:
             return "請輸入要查詢的內容。"
 
-        print("LINE Agent Query:", text)
+        # 連續對話：本句沒有戶別時，才套用 LINE 使用者目前記住的戶別。
+        # 明確輸入新戶別時永遠以新戶別為準。
+        explicit_resident_id = _extract_resident_id(text)
+        # 只在「明顯承接上一戶」的語句中套用上下文。
+        # 避免官方推播後，使用者講一般性的「車位」、「今天」等字眼時被誤套戶別。
+        contextual_reference_words = [
+            "他", "他的", "她", "她的",
+            "這戶", "这户", "該戶", "该户",
+            "這個住戶", "这个住户",
+            "那戶", "那一戶", "那一户",
+            "剛剛那戶", "刚刚那户",
+            "剛剛那個", "刚刚那个",
+            "那個住戶", "那个住户",
+        ]
 
-        direct_result = _route_direct_query(text)
+        contextual_followup_phrases = [
+            "還剩多少錢", "還有多少錢", "剩多少錢",
+            "他的車呢", "她的車呢", "車呢",
+            "有幾台", "幾台車",
+            "停哪裡", "停哪",
+            "今天有交易嗎", "今天交易",
+            "交易明細呢", "明細呢",
+            "零用金呢", "餘額呢",
+        ]
+
+        routed_text = text
+        should_apply_context = (
+            not explicit_resident_id
+            and context_resident_id
+            and (
+                _contains_any(text, contextual_reference_words)
+                or _contains_any(text, contextual_followup_phrases)
+            )
+        )
+
+        if should_apply_context:
+            routed_text = f"{context_resident_id} {text}"
+            print("Context Resident Applied:", context_resident_id)
+
+        print("LINE Agent Query:", text)
+        if routed_text != text:
+            print("LINE Agent Routed Query:", routed_text)
+
+        direct_result = _route_direct_query(routed_text)
         if direct_result is not None:
             print("Router Mode: DIRECT")
             return direct_result
 
         print("Router Mode: GEMINI")
-        return _ask_gemini(text)
+        return _ask_gemini(routed_text)
 
     except Exception as exc:
         print("LINE Agent Error:", type(exc).__name__, str(exc))
