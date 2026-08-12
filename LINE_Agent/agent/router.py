@@ -55,6 +55,25 @@ def get_ai_response(user_text: str) -> str:
             if "車位" in user_text:
                 return str(get_parking_info(resident_id))
 
+        # ===== 車位管理型查詢 =====
+
+        if "第三台車" in user_text or "三台車" in user_text:
+            return str(get_third_car_residents())
+
+        if "租客" in user_text and (
+            "車位" in user_text
+            or "車輛" in user_text
+            or "車" in user_text
+        ):
+            return str(get_tenant_parking_summary())
+
+        if (
+            "車位總覽" in user_text
+            or "車位統計" in user_text
+            or "車位總結" in user_text
+        ):
+            return str(get_parking_asset_summary())
+
         # 有查詢意圖，但沒有提供戶別
         if "零用金" in user_text:
             return "請提供戶別，例如：查詢 1A 零用金。"
