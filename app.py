@@ -127,26 +127,48 @@ def save_cloud_ledger(df_to_save):
         st.error(f"❌ 寫入雲端零用金失敗: {e}")
         return False
 
+def _clean_text_value(value):
+    """把 Google Sheet / pandas 的空值統一成空字串。"""
+    if value is None or pd.isna(value):
+        return ""
+    text_value = str(value).strip()
+    if text_value.lower() in {"nan", "none", "null", "<na>"}:
+        return ""
+    return text_value
+
+
+def _normalize_phone(value):
+    phone = _clean_text_value(value)
+    if not phone:
+        return ""
+    phone = phone.split(".")[0]
+    phone = re.sub(r"[^0-9+]", "", phone)
+    if len(phone) == 9 and phone.startswith("9"):
+        phone = "0" + phone
+    return phone
+
+
 def load_parking_ledger():
+    """依 SmartProp 共用「車位登記」Schema 載入並標準化資料。"""
     required_cols = ["流水號", "車位號碼", "戶別", "車牌號碼", "車主姓名", "連絡電話", "身分標記", "車輛備註", "登記日期"]
     try:
         df = conn.read(spreadsheet=SPREADSHEET_NAME, worksheet="車位登記", ttl=0)
-        if df is not None and not df.empty and "車位號碼" in df.columns:
-            df["流水號"] = pd.to_numeric(df["流水號"]).fillna(0).astype(int)
-            for col in ["車位號碼", "車牌號碼", "車主姓名", "連絡電話", "戶別", "身分標記", "車輛備註", "登記日期"]:
-                if col in df.columns:
-                    df[col] = df[col].astype(str).str.strip()
-                else:
-                    df[col] = "屋主" if col == "身分標記" else ""
-            
-            if "連絡電話" in df.columns:
-                df["連絡電話"] = df["連絡電話"].apply(lambda x: x.split('.')[0] if '.' in x else x)
-                df["連絡電話"] = df["連絡電話"].apply(lambda x: "0" + x if len(x) == 9 and x.startswith("9") else x)
-                
-            df["車牌號碼"] = df["車牌號碼"].str.upper()
-            return df[[c for c in required_cols if c in df.columns]]
-        return pd.DataFrame(columns=required_cols)
-    except Exception:
+        if df is None or df.empty:
+            return pd.DataFrame(columns=required_cols)
+
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = "屋主" if col == "身分標記" else ""
+
+        df["流水號"] = pd.to_numeric(df["流水號"], errors="coerce").fillna(0).astype(int)
+        for col in ["車位號碼", "戶別", "車主姓名", "身分標記", "車輛備註", "登記日期"]:
+            df[col] = df[col].apply(_clean_text_value)
+        df["車牌號碼"] = df["車牌號碼"].apply(lambda x: format_plate_number(_clean_text_value(x)))
+        df["連絡電話"] = df["連絡電話"].apply(_normalize_phone)
+        df["身分標記"] = df["身分標記"].replace("", "屋主")
+        return df[required_cols].copy()
+    except Exception as exc:
+        print("Web Parking Load Error:", type(exc).__name__, str(exc))
         return pd.DataFrame(columns=required_cols)
 
 def save_parking_ledger(df_to_save):
@@ -201,6 +223,124 @@ def save_binding_mapping(worksheet_name, mapping_dict):
         st.error(f"❌ 寫入 {worksheet_name} 失敗: {e}")
         return False
 
+SYSTEM_SETTINGS_WORKSHEET = "系統設定"
+SYSTEM_SETTINGS_COLUMNS = ["類型", "名稱", "數值", "啟用", "備註"]
+
+DEFAULT_SYSTEM_SETTINGS = [
+    {"類型": "經手人", "名稱": "日班-詹詹", "數值": "", "啟用": True, "備註": ""},
+    {"類型": "經手人", "名稱": "夜班-宗宗", "數值": "", "啟用": True, "備註": ""},
+    {"類型": "經手人", "名稱": "經理-00", "數值": "", "啟用": True, "備註": ""},
+    {"類型": "常用項目", "名稱": "儲值", "數值": "", "啟用": True, "備註": ""},
+    {"類型": "常用項目", "名稱": "水果錢", "數值": "", "啟用": True, "備註": ""},
+    {"類型": "常用項目", "名稱": "文具", "數值": "", "啟用": True, "備註": ""},
+    {"類型": "常用項目", "名稱": "關稅", "數值": "", "啟用": True, "備註": ""},
+    {"類型": "常用項目", "名稱": "貨到付款", "數值": "", "啟用": True, "備註": ""},
+    {"類型": "抽籤排除", "名稱": "1A", "數值": "", "啟用": True, "備註": "管理中心"},
+    {"類型": "車位容量", "名稱": "B1汽車位", "數值": "20", "啟用": True, "備註": ""},
+    {"類型": "車位容量", "名稱": "B2汽車位", "數值": "20", "啟用": True, "備註": ""},
+    {"類型": "車位容量", "名稱": "B3汽車位", "數值": "15", "啟用": True, "備註": ""},
+    {"類型": "車位容量", "名稱": "機車位", "數值": "112", "啟用": True, "備註": ""},
+]
+
+
+def _to_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes", "y", "on", "啟用"}
+
+
+def load_system_settings():
+    try:
+        df = conn.read(spreadsheet=SPREADSHEET_NAME, worksheet=SYSTEM_SETTINGS_WORKSHEET, ttl=0)
+        if df is None or df.empty:
+            return pd.DataFrame(DEFAULT_SYSTEM_SETTINGS, columns=SYSTEM_SETTINGS_COLUMNS), False
+        for col in SYSTEM_SETTINGS_COLUMNS:
+            if col not in df.columns:
+                df[col] = ""
+        for col in ["類型", "名稱", "數值", "備註"]:
+            df[col] = df[col].apply(_clean_text_value)
+        df["啟用"] = df["啟用"].apply(_to_bool)
+        return df[SYSTEM_SETTINGS_COLUMNS].copy(), True
+    except Exception as exc:
+        print("System Settings Load Warning:", type(exc).__name__, str(exc))
+        return pd.DataFrame(DEFAULT_SYSTEM_SETTINGS, columns=SYSTEM_SETTINGS_COLUMNS), False
+
+
+def save_system_settings(df_to_save):
+    df_copy = df_to_save.copy()
+    for col in SYSTEM_SETTINGS_COLUMNS:
+        if col not in df_copy.columns:
+            df_copy[col] = ""
+    df_copy = df_copy[SYSTEM_SETTINGS_COLUMNS]
+    df_copy["啟用"] = df_copy["啟用"].apply(bool)
+    try:
+        conn.update(spreadsheet=SPREADSHEET_NAME, worksheet=SYSTEM_SETTINGS_WORKSHEET, data=df_copy)
+        st.session_state.system_settings_data = df_copy.copy()
+        st.session_state.system_settings_cloud_ready = True
+        return True
+    except Exception as exc:
+        st.error("❌ 系統設定寫入失敗。請確認新 Google Sheet 已建立『系統設定』分頁，第一列為：類型、名稱、數值、啟用、備註。")
+        print("System Settings Save Error:", type(exc).__name__, str(exc))
+        return False
+
+
+def apply_system_settings_to_session():
+    df = st.session_state.system_settings_data.copy()
+    active = df[df["啟用"].apply(_to_bool)].copy()
+    handlers = active[active["類型"] == "經手人"]["名稱"].tolist()
+    items = active[active["類型"] == "常用項目"]["名稱"].tolist()
+    excluded = active[active["類型"] == "抽籤排除"]["名稱"].tolist()
+    capacities = {}
+    for _, row in active[active["類型"] == "車位容量"].iterrows():
+        try:
+            capacities[row["名稱"]] = int(float(row["數值"]))
+        except Exception:
+            pass
+    st.session_state.common_handlers = handlers or ["日班-詹詹"]
+    st.session_state.common_items = items or ["儲值"]
+    st.session_state.lottery_excluded_res = excluded
+    st.session_state.parking_capacities = capacities or {"B1汽車位": 20, "B2汽車位": 20, "B3汽車位": 15, "機車位": 112}
+
+
+def add_or_reactivate_setting(setting_type, name, value="", note=""):
+    name = str(name).strip()
+    if not name:
+        return False
+    df = st.session_state.system_settings_data.copy()
+    mask = (df["類型"] == setting_type) & (df["名稱"] == name)
+    if mask.any():
+        df.loc[mask, "數值"] = str(value)
+        df.loc[mask, "備註"] = str(note)
+        df.loc[mask, "啟用"] = True
+    else:
+        df = pd.concat([df, pd.DataFrame([{"類型": setting_type, "名稱": name, "數值": str(value), "啟用": True, "備註": str(note)}])], ignore_index=True)
+    if save_system_settings(df):
+        apply_system_settings_to_session()
+        return True
+    return False
+
+
+def disable_setting(setting_type, name):
+    df = st.session_state.system_settings_data.copy()
+    mask = (df["類型"] == setting_type) & (df["名稱"] == name)
+    if not mask.any():
+        return False
+    df.loc[mask, "啟用"] = False
+    if save_system_settings(df):
+        apply_system_settings_to_session()
+        return True
+    return False
+
+
+def disable_all_settings_of_type(setting_type):
+    df = st.session_state.system_settings_data.copy()
+    df.loc[df["類型"] == setting_type, "啟用"] = False
+    if save_system_settings(df):
+        apply_system_settings_to_session()
+        return True
+    return False
+
+
 def refresh_all_cloud_data(show_message=True):
     """強制重新讀取 Google Sheet，避免 LINE / 網頁跨系統更新後畫面仍停留舊快取。"""
     try:
@@ -208,6 +348,10 @@ def refresh_all_cloud_data(show_message=True):
         st.session_state.parking_data = load_parking_ledger()
         st.session_state.car_space_mapping = load_binding_mapping("汽車位綁定")
         st.session_state.moto_space_mapping = load_binding_mapping("機車位綁定")
+        settings_df, settings_ready = load_system_settings()
+        st.session_state.system_settings_data = settings_df
+        st.session_state.system_settings_cloud_ready = settings_ready
+        apply_system_settings_to_session()
         if show_message:
             st.toast("☁️ 已重新同步 SmartProp 雲端資料", icon="🔄")
         return True
@@ -233,8 +377,11 @@ if 'resident_list' not in st.session_state:
             init_res.append(f"{floor}{room}")
     st.session_state.resident_list = init_res
 
-if 'lottery_excluded_res' not in st.session_state:
-    st.session_state.lottery_excluded_res = ["1A"]
+if 'system_settings_data' not in st.session_state:
+    _settings_df, _settings_ready = load_system_settings()
+    st.session_state.system_settings_data = _settings_df
+    st.session_state.system_settings_cloud_ready = _settings_ready
+    apply_system_settings_to_session()
 
 if 'car_space_mapping' not in st.session_state:
     st.session_state.car_space_mapping = load_binding_mapping("汽車位綁定")
@@ -247,19 +394,6 @@ if 'resident_initial_balances' not in st.session_state:
 
 if 'cash_inventory' not in st.session_state:
     st.session_state.cash_inventory = {"n1000": 0, "n500": 0, "n100": 0, "n50": 0, "n10": 0, "n1": 0}
-
-if 'common_items' not in st.session_state:
-    st.session_state.common_items = ["儲值", "水果錢", "文具", "關稅", "貨到付款"]
-if 'common_handlers' not in st.session_state:
-    st.session_state.common_handlers = ["日班-詹詹", "夜班-宗宗", "經理-00"]
-
-if 'parking_capacities' not in st.session_state:
-    st.session_state.parking_capacities = {
-        "B1汽車位": 20,
-        "B2汽車位": 20,
-        "B3汽車位": 15,
-        "機車位": 112
-    }
 
 if 'generated_line_text' not in st.session_state:
     st.session_state.generated_line_text = ""
@@ -846,7 +980,11 @@ elif menu == "🚗 車位登記及查詢":
                 else:
                     return ['' for _ in row]
 
-            st.dataframe(df_park_display.style.apply(highlight_empty_slots, axis=1), use_container_width=True, hide_index=True)
+            df_park_view = df_park_display.copy()
+            for _col in df_park_view.columns:
+                if df_park_view[_col].dtype == object:
+                    df_park_view[_col] = df_park_view[_col].replace({"": "—", "nan": "—", "NaN": "—", "None": "—"})
+            st.dataframe(df_park_view.style.apply(highlight_empty_slots, axis=1), use_container_width=True, hide_index=True)
         else:
             st.info("💡 目前車位資料庫尚無資料。")
             
@@ -1080,56 +1218,66 @@ else:
     tab_set1, tab_set2 = st.tabs(["📝 基礎名冊與公設排除設定", "🏍️ 112戶年度機車位隨機抽籤與雲端同步"])
     
     with tab_set1:
-        col_set1, col_set2 = st.columns(2)
-        
-        with col_set1:
-            st.markdown("#### 📝 常用項目/摘要維護")
-            new_item = st.text_input("➕ 增加常用項目：", key="backend_add_item")
-            if st.button("確認增加項目", key="btn_add_item") and new_item.strip():
-                if new_item.strip() not in st.session_state.common_items:
-                    st.session_state.common_items.append(new_item.strip())
-                    st.toast(f"已新增項目: {new_item.strip()}", icon="📝")
-                    time.sleep(0.5)
+        if not st.session_state.system_settings_cloud_ready:
+            st.warning("⚠️ 尚未偵測到『系統設定』分頁。請在新 Google Sheet 新增該分頁，第一列填：類型、名稱、數值、啟用、備註。")
+            if st.button("☁️ 初始化系統設定到雲端", type="primary", key="init_system_settings_cloud"):
+                if save_system_settings(st.session_state.system_settings_data):
+                    apply_system_settings_to_session()
+                    st.success("✅ 系統設定已雲端化。")
+                    time.sleep(0.4)
                     st.rerun()
-            del_item = st.selectbox("➖ 刪除常用項目：", ["請選擇要刪除的項目..."] + st.session_state.common_items, key="backend_del_item")
-            if st.button("確認刪除項目", key="btn_del_item") and del_item != "請選擇要刪除的項目...":
-                st.session_state.common_items.remove(del_item)
-                st.toast(f"已刪除項目: {del_item}", icon="🗑️")
-                time.sleep(0.5)
-                st.rerun()
+
+        st.caption("☁️ 後台的人員、常用摘要、排除戶別與備註會直接寫入共用 Google Sheet。")
+        col_set1, col_set2 = st.columns(2)
+
+        with col_set1:
+            st.markdown("#### 📝 常用項目 / 摘要")
+            new_item = st.text_input("項目名稱", placeholder="例如：水果錢", key="backend_add_item")
+            new_item_note = st.text_input("備註（選填）", placeholder="例如：櫃台常用代墊", key="backend_add_item_note")
+            if st.button("➕ 新增或重新啟用項目", key="btn_add_item", use_container_width=True) and new_item.strip():
+                if add_or_reactivate_setting("常用項目", new_item.strip(), note=new_item_note.strip()):
+                    st.toast(f"已同步：{new_item.strip()}", icon="☁️")
+                    time.sleep(0.4); st.rerun()
+            del_item = st.selectbox("停用常用項目", ["請選擇..."] + st.session_state.common_items, key="backend_del_item")
+            if st.button("⏸️ 停用所選項目", key="btn_del_item", use_container_width=True) and del_item != "請選擇...":
+                if disable_setting("常用項目", del_item):
+                    st.toast(f"已停用：{del_item}", icon="📝"); time.sleep(0.4); st.rerun()
 
             st.markdown("---")
-            st.markdown("#### 🏠 管理中心排除設定 (不參與機車抽籤)")
-            exclude_input = st.selectbox("選擇要排除參與機車抽籤的公設/管理戶別：", st.session_state.resident_list, index=0, key="exc_res_select")
-            if st.button("➕ 加入抽籤排除名單", key="add_exc_btn"):
-                if exclude_input not in st.session_state.lottery_excluded_res:
-                    st.session_state.lottery_excluded_res.append(exclude_input)
-                    st.success(f"🎉 戶別 {exclude_input} 已成功加入抽籤排除名單！")
-                    time.sleep(0.5)
-                    st.rerun()
-            
-            st.write(f"目前排除名單: `{st.session_state.lottery_excluded_res}`")
-            if st.button("🧹 清空排除名單 (恢復全部參與)", key="clear_exc_btn"):
-                st.session_state.lottery_excluded_res = []
-                st.success("🎉 已清空排除名單！")
-                time.sleep(0.5)
-                st.rerun()
-                
+            st.markdown("#### 🏠 抽籤排除設定")
+            exclude_input = st.selectbox("排除戶別", st.session_state.resident_list, index=0, key="exc_res_select")
+            exclude_note = st.text_input("排除備註", value="管理/公設戶", key="exc_res_note")
+            if st.button("➕ 加入抽籤排除", key="add_exc_btn", use_container_width=True):
+                if add_or_reactivate_setting("抽籤排除", exclude_input, note=exclude_note.strip()):
+                    st.success(f"✅ {exclude_input} 已同步為排除戶。")
+                    time.sleep(0.4); st.rerun()
+            st.caption("目前啟用：" + ("、".join(st.session_state.lottery_excluded_res) if st.session_state.lottery_excluded_res else "無"))
+            if st.button("🧹 停用全部抽籤排除", key="clear_exc_btn", use_container_width=True):
+                if disable_all_settings_of_type("抽籤排除"):
+                    st.success("✅ 已停用全部排除設定。")
+                    time.sleep(0.4); st.rerun()
+
         with col_set2:
-            st.markdown("#### 👤 經手人名冊維護")
-            new_handler = st.text_input("➕ 增加經手人員(職稱-人員)：", key="backend_add_handler")
-            if st.button("確認增加經手人", key="btn_add_handler") and new_handler.strip():
-                if new_handler.strip() not in st.session_state.common_handlers:
-                    st.session_state.common_handlers.append(new_handler.strip())
-                    st.toast(f"已上架新經手人: {new_handler.strip()}", icon="👤")
-                    time.sleep(0.5)
-                    st.rerun()
-            del_handler = st.selectbox("➖ 刪除特定經手人：", ["請選擇要刪除的經手人..."] + st.session_state.common_handlers, key="backend_del_handler")
-            if st.button("確認刪除經手人", key="btn_del_handler") and del_handler != "請選擇要刪除的經手人...":
-                st.session_state.common_handlers.remove(del_handler)
-                st.toast(f"已撤銷經手人: {del_handler}", icon="🗑️")
-                time.sleep(0.5)
-                st.rerun()
+            st.markdown("#### 👤 經手人名冊")
+            new_handler = st.text_input("經手人（職稱-人員）", placeholder="例如：日班-小王", key="backend_add_handler")
+            new_handler_note = st.text_input("人員備註（選填）", placeholder="例如：平日日班", key="backend_add_handler_note")
+            if st.button("➕ 新增或重新啟用經手人", key="btn_add_handler", use_container_width=True) and new_handler.strip():
+                if add_or_reactivate_setting("經手人", new_handler.strip(), note=new_handler_note.strip()):
+                    st.toast(f"已同步：{new_handler.strip()}", icon="☁️")
+                    time.sleep(0.4); st.rerun()
+            del_handler = st.selectbox("停用經手人", ["請選擇..."] + st.session_state.common_handlers, key="backend_del_handler")
+            if st.button("⏸️ 停用所選經手人", key="btn_del_handler", use_container_width=True) and del_handler != "請選擇...":
+                if disable_setting("經手人", del_handler):
+                    st.toast(f"已停用：{del_handler}", icon="👤"); time.sleep(0.4); st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### ☁️ 雲端設定狀態")
+            active_settings = st.session_state.system_settings_data[st.session_state.system_settings_data["啟用"].apply(_to_bool)]
+            m1, m2 = st.columns(2)
+            m1.metric("啟用經手人", len(st.session_state.common_handlers))
+            m2.metric("常用項目", len(st.session_state.common_items))
+            with st.expander("查看目前系統設定"):
+                st.dataframe(active_settings[SYSTEM_SETTINGS_COLUMNS], use_container_width=True, hide_index=True)
 
     with tab_set2:
         st.markdown("### 🎲 112 戶年度機車位隨機抽籤模組 (智慧保留現有車牌與身分)")
