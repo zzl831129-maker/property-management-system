@@ -210,6 +210,22 @@ def _route_direct_query(user_text: str):
     target_date = _extract_date(text)
     target_month = _extract_month(text)
 
+    # 反向搜尋：優先走 Python DIRECT，不交給 Gemini
+    phone = _extract_phone(text)
+    if phone and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "電話", "手機", "聯絡"]):
+        print("Direct Reverse Search: PHONE", phone)
+        return str(search_parking_by_phone(phone))
+
+    plate = _extract_plate(text)
+    if plate and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "車", "車牌", "查", "找"]):
+        print("Direct Reverse Search: PLATE", plate)
+        return str(search_parking_by_plate(plate))
+
+    space = _extract_space_keyword(text)
+    if space and _contains_any(text, ["誰", "哪戶", "哪一戶", "住戶", "車位", "停", "查", "找"]):
+        print("Direct Reverse Search: SPACE", space)
+        return str(search_parking_by_space(space))
+
     # 住戶整合查詢：查1A / 1A資料 / 查詢1A住戶
     if _is_resident_overview_query(text, resident_id):
         return _get_resident_overview(resident_id)
@@ -290,7 +306,7 @@ def _route_direct_query(user_text: str):
         return "請提供戶別，例如：查詢 1A 零用金。"
 
     if _contains_any(text, ["車位", "車牌", "車輛", "停車", "停哪", "汽車", "機車"]) and not resident_id:
-        return "請提供戶別，例如：查詢 2A 車位。"
+        return "請提供戶別、車牌或車位，例如：查詢 2A 車位、BQV9969是誰的車、B3-33是哪一戶。"
 
     return None
 
