@@ -44,10 +44,10 @@ def get_ai_response(user_text: str) -> str:
         # 暫時繞過 Gemini，確認 Google Sheet 查詢功能是否正常
        # 從使用者訊息抓戶別，例如 1A、2B、12C
   # 從使用者訊息抓戶別，例如：1A、2B、12C
-        resident_match = re.search(r"\b\d+[A-Za-z]\b", user_text)
+        resident_match = re.search(r"(\d+\s*[A-Za-z])", user_text)
 
         if resident_match:
-            resident_id = resident_match.group().upper()
+            resident_id = resident_match.group().replace(" ", "").upper()
 
             if "零用金" in user_text:
                 return str(get_ledger_balance(resident_id))
