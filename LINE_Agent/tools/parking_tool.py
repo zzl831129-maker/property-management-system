@@ -303,3 +303,39 @@ def get_resident_vehicle_count(resident_id: str):
         f"🚗 汽車：{car_count} 台\n"
         f"🛵 機車：{moto_count} 台"
     )
+
+
+def get_parking_management_snapshot():
+    """回傳管理摘要所需的確定性車位分析。"""
+    df = _parking_df()
+    if df.empty:
+        return "📭 目前無車位登記資料。"
+
+    residents = df["戶別"].astype(str).str.strip()
+    counts = residents.value_counts()
+    multi3 = counts[counts >= 3].sort_values(ascending=False)
+
+    identity = df["身分標記"].astype(str).str.strip() if "身分標記" in df.columns else pd.Series("", index=df.index)
+    tenant_df = df[identity == "租客"]
+    tenant_households = tenant_df["戶別"].astype(str).str.strip().nunique() if not tenant_df.empty else 0
+
+    spaces = df["車位號碼"].astype(str)
+    car_count = int(spaces.str.contains("汽車|B1-|B2-|B3-", regex=True, na=False).sum())
+    moto_count = int(spaces.str.contains("機車", regex=False, na=False).sum())
+
+    lines = [
+        "🅿️【車位管理摘要】",
+        "━━━━━━━━━━━━",
+        f"🚗 汽車登記｜{car_count} 筆",
+        f"🛵 機車登記｜{moto_count} 筆",
+        f"🔑 租客車輛｜{len(tenant_df)} 筆 / {tenant_households} 戶",
+        f"⚠️ 3 台以上｜{len(multi3)} 戶",
+    ]
+
+    if not multi3.empty:
+        lines.append("━━━━━━━━━━━━")
+        lines.append("🚘 多車戶")
+        for resident, count in multi3.head(5).items():
+            lines.append(f"• {resident} 戶｜{count} 台")
+
+    return "\n".join(lines)

@@ -164,3 +164,143 @@ def get_resident_overview_ledger(resident_id: str):
     """住戶整合查詢用：回傳該戶零用金摘要。"""
     return get_ledger_balance(resident_id)
 
+
+
+def _filter_ledger_period(df, target_date=None, target_month=None):
+    """依日期/月分篩選零用金資料。"""
+    if df.empty or DATE_COLUMN not in df.columns:
+        return df.copy()
+
+    date_series = pd.to_datetime(df[DATE_COLUMN], errors="coerce")
+    if target_date:
+        return df[date_series.dt.strftime("%Y-%m-%d") == str(target_date)].copy()
+    if target_month:
+        return df[date_series.dt.strftime("%Y-%m").eq(str(target_month))].copy()
+    return df.copy()
+
+
+def get_ledger_ranking(target_month: str = None, ranking_type: str = "expense", top_n: int = 5):
+    """住戶零用金收入/支出排行。"""
+    df = _ledger_df()
+    if df.empty:
+        return "📭 目前無零用金資料。"
+
+    filtered = _filter_ledger_period(df, target_month=target_month)
+    if filtered.empty:
+        return f"📭 {target_month or '指定期間'} 無零用金交易資料。"
+
+    value_col = "收入金額" if ranking_type == "income" else "支出金額"
+    label = "收入" if ranking_type == "income" else "支出"
+
+    grouped = (
+        filtered.groupby("戶別")[value_col]
+        .sum()
+        .sort_values(ascending=False)
+    )
+    grouped = grouped[grouped > 0].head(max(1, int(top_n)))
+
+    if grouped.empty:
+        return f"📊【{target_month or '全部期間'}｜{label}排行】\n目前沒有{label}紀錄。"
+
+    lines = [
+        f"{idx}. {str(resident).strip()} 戶｜{_money(amount)}"
+        for idx, (resident, amount) in enumerate(grouped.items(), start=1)
+    ]
+    return (
+        f"📊【{target_month or '全部期間'}｜零用金{label}排行 TOP {len(grouped)}】\n"
+        "━━━━━━━━━━━━\n" + "\n".join(lines)
+    )
+
+
+def get_low_balance_residents(threshold: float = 1000):
+    """找出目前餘額低於門檻的住戶（含透支）。"""
+    df = _ledger_df()
+    if df.empty:
+        return "📭 目前無零用金資料。"
+
+    grouped = df.groupby("戶別")[["收入金額", "支出金額"]].sum()
+    grouped["餘額"] = grouped["收入金額"] - grouped["支出金額"]
+    low = grouped[grouped["餘額"] < float(threshold)].sort_values("餘額")
+
+    if low.empty:
+        return f"✅【低餘額清查】\n目前沒有餘額低於 {_money(threshold)} 的住戶。"
+
+    lines = []
+    for idx, (resident, row) in enumerate(low.iterrows(), start=1):
+        balance = float(row["餘額"])
+        icon = "🔴" if balance < 0 else "🟠"
+        lines.append(f"{idx}. {resident} 戶｜{icon} {_money(balance)}")
+
+    return (
+        f"⚠️【低餘額清查｜低於 {_money(threshold)}｜共 {len(low)} 戶】\n"
+        "━━━━━━━━━━━━\n" + "\n".join(lines)
+    )
+
+
+def get_high_activity_residents(target_month: str = None, top_n: int = 5):
+    """依交易筆數找出指定月份最活躍的住戶。"""
+    df = _ledger_df()
+    if df.empty:
+        return "📭 目前無零用金資料。"
+
+    filtered = _filter_ledger_period(df, target_month=target_month)
+    if filtered.empty:
+        return f"📭 {target_month or '指定期間'} 無零用金交易資料。"
+
+    counts = filtered["戶別"].astype(str).str.strip().value_counts().head(max(1, int(top_n)))
+    lines = [f"{idx}. {resident} 戶｜{count} 筆" for idx, (resident, count) in enumerate(counts.items(), start=1)]
+
+    return (
+        f"🧾【{target_month or '全部期間'}｜交易筆數排行 TOP {len(counts)}】\n"
+        "━━━━━━━━━━━━\n" + "\n".join(lines)
+    )
+
+
+def get_ledger_management_snapshot(target_date: str = None, target_month: str = None, low_balance_threshold: float = 1000):
+    """回傳管理摘要所需的確定性零用金分析；所有數字由 Python 計算。"""
+    df = _ledger_df()
+    if df.empty:
+        return "📭 目前無零用金資料。"
+
+    period_df = _filter_ledger_period(df, target_date=target_date, target_month=target_month)
+    period_label = target_date or target_month or "全部期間"
+
+    total_income = float(period_df["收入金額"].sum()) if not period_df.empty else 0.0
+    total_expense = float(period_df["支出金額"].sum()) if not period_df.empty else 0.0
+    transaction_count = int(len(period_df))
+
+    balances = df.groupby("戶別")[["收入金額", "支出金額"]].sum()
+    balances["餘額"] = balances["收入金額"] - balances["支出金額"]
+    overdrawn = balances[balances["餘額"] < 0].sort_values("餘額")
+    low = balances[(balances["餘額"] >= 0) & (balances["餘額"] < float(low_balance_threshold))].sort_values("餘額")
+
+    expense_rank = (
+        period_df.groupby("戶別")["支出金額"].sum().sort_values(ascending=False)
+        if not period_df.empty else pd.Series(dtype=float)
+    )
+    expense_rank = expense_rank[expense_rank > 0].head(3)
+
+    lines = [
+        f"📊【{period_label}｜管理數據摘要】",
+        "━━━━━━━━━━━━",
+        f"📥 收入｜{_money(total_income)}",
+        f"📤 支出｜{_money(total_expense)}",
+        f"💰 淨變動｜{_money(total_income - total_expense)}",
+        f"🧾 交易｜{transaction_count} 筆",
+        f"🔴 透支戶｜{len(overdrawn)} 戶",
+        f"🟠 低餘額戶(<{_money(low_balance_threshold)})｜{len(low)} 戶",
+    ]
+
+    if not expense_rank.empty:
+        lines.append("━━━━━━━━━━━━")
+        lines.append("📤 支出 TOP 3")
+        for idx, (resident, amount) in enumerate(expense_rank.items(), start=1):
+            lines.append(f"{idx}. {resident} 戶｜{_money(amount)}")
+
+    if not overdrawn.empty:
+        lines.append("━━━━━━━━━━━━")
+        lines.append("🚨 透支優先注意")
+        for resident, row in overdrawn.head(5).iterrows():
+            lines.append(f"• {resident} 戶｜{_money(row['餘額'])}")
+
+    return "\n".join(lines)

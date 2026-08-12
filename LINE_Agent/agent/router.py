@@ -14,6 +14,10 @@ from tools.ledger_tool import (
     get_resident_daily_detail,
     get_overdrawn_residents,
     get_resident_overview_ledger,
+    get_ledger_ranking,
+    get_low_balance_residents,
+    get_high_activity_residents,
+    get_ledger_management_snapshot,
 )
 from tools.parking_tool import (
     get_parking_info,
@@ -27,6 +31,7 @@ from tools.parking_tool import (
     search_parking_registry,
     search_parking_by_owner,
     get_resident_vehicle_count,
+    get_parking_management_snapshot,
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -240,6 +245,55 @@ def _get_resident_overview(resident_id: str) -> str:
         "📡 資料來源：Google Sheet 即時查詢"
     )
 
+
+def _get_management_brief(target_date=None, target_month=None) -> str:
+    """
+    管理摘要：先由 Python/Google Sheet 產生真實數據，再交給 Gemini 做短評。
+    Gemini 不負責計算數字，避免幻覺。
+    """
+    ledger_snapshot = str(
+        get_ledger_management_snapshot(
+            target_date=target_date,
+            target_month=target_month,
+        )
+    )
+    parking_snapshot = str(get_parking_management_snapshot())
+
+    facts = (
+        f"{ledger_snapshot}\n\n"
+        f"{parking_snapshot}"
+    )
+
+    try:
+        model = genai.GenerativeModel(
+            model_name=GEMINI_MODEL,
+            system_instruction=(
+                "你是 SmartProp 物業管理分析助理。"
+                "以下資料已由 Python 從 Google Sheet 計算完成。"
+                "你只能根據提供的數據做管理解讀，不得修改、重算或捏造數字。"
+                "請用繁體中文，最多列出 3 個值得注意的重點與 1 個建議。"
+                "若沒有明顯異常，請明確說目前未見明顯異常。"
+                "不要做法律、財務投資或醫療推論。"
+            ),
+        )
+        response = model.generate_content(
+            "請根據以下 SmartProp 管理數據產生簡短管理判讀：\n\n" + facts
+        )
+        analysis = (response.text or "").strip()
+    except Exception as exc:
+        print("Management AI Analysis Error:", type(exc).__name__, str(exc))
+        analysis = "AI 判讀暫時不可用；以上 Python 統計數據仍可正常使用。"
+
+    return (
+        "🤖【SmartProp 管理摘要】\n"
+        "━━━━━━━━━━━━\n"
+        f"{facts}\n\n"
+        "━━━━━━━━━━━━\n"
+        "🧠 AI 管理判讀\n"
+        f"{analysis}"
+    )
+
+
 def _route_direct_query(user_text: str):
     text = _normalize_text(user_text)
     resident_id = _extract_resident_id(text)
@@ -296,6 +350,43 @@ def _route_direct_query(user_text: str):
         # 口語但只有戶別：例如「幫我看一下2A」
         if _contains_any(text, ["幫我看", "看一下", "查一下", "查查看", "資料", "資訊", "狀況", "情況"]):
             return _get_resident_overview(resident_id)
+
+    # ========================================================
+    # 3. 社區管理分析 + AI 助理
+    # ========================================================
+    if _contains_any(text, [
+        "管理摘要", "管理日報", "今日管理摘要", "今天管理摘要",
+        "有沒有需要注意", "有什麼需要注意", "有哪些需要注意",
+        "今天有什麼異常", "今日有什麼異常",
+        "幫我分析", "分析這個月", "本月分析",
+    ]):
+        return _get_management_brief(
+            target_date=target_date,
+            target_month=target_month,
+        )
+
+    if target_month and _contains_any(text, [
+        "支出排行", "花最多", "花費排行", "支出最多",
+        "哪一戶花最多", "哪些戶花最多",
+    ]):
+        return str(get_ledger_ranking(target_month=target_month, ranking_type="expense"))
+
+    if target_month and _contains_any(text, [
+        "收入排行", "收入最多", "哪一戶收入最多",
+    ]):
+        return str(get_ledger_ranking(target_month=target_month, ranking_type="income"))
+
+    if target_month and _contains_any(text, [
+        "交易最多", "交易特別多", "交易排行", "交易筆數排行",
+        "哪一戶交易最多",
+    ]):
+        return str(get_high_activity_residents(target_month=target_month))
+
+    if _contains_any(text, [
+        "快沒錢", "快沒錢了", "低餘額", "餘額太低",
+        "餘額不足", "哪些戶錢不多",
+    ]):
+        return str(get_low_balance_residents())
 
     # ========================================================
     # 3. 車位管理型查詢
@@ -363,7 +454,7 @@ def _ask_gemini(user_text: str) -> str:
         tools=TOOLS_LIST,
         system_instruction=(
             "你是 SmartProp 社區物業管理 AI 查詢助理。你只處理 Python Router 無法直接判斷的自然語言問題。"
-            "你的主要資料來源是系統提供的零用金與車位工具。"
+            "你的主要資料來源是系統提供的零用金與車位工具。管理統計的數字由 Python 計算，AI 不得自行編造或重算。"
             "只要問題涉及住戶零用金、交易、車位、車牌、租客車輛、聯絡電話或社區統計，"
             "必須優先使用工具取得真實資料，不可自行猜測或編造。"
             "若使用者只提供車牌、車位或電話並詢問是誰、哪一戶、停哪裡，請使用反向查詢工具。"
