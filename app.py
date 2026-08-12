@@ -37,41 +37,52 @@ st.caption("✨ SmartProp Web Console")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # ============================================================
-# SmartProp 資料來源設定
+# SmartProp 統一資料來源設定
 # ============================================================
-# 新版：LINE Agent 目前使用的新 Google Sheet
-PRIMARY_SPREADSHEET_URL = (
+# 原則：
+# 1. STREAMLIT_SECRETS 只保存 Google Service Account 認證
+# 2. SMARTPROP_SPREADSHEET_URL 決定正式資料庫
+# 3. SMARTPROP_LEGACY_SPREADSHEET_URL 決定舊資料庫
+# 4. SMARTPROP_USE_LEGACY_SHEET=true 可快速 Rollback
+#
+# 這樣 Web / LINE 可以共用同一份 Google Sheet，
+# 但認證與資料庫位置彼此分離，日後換社區/換資料庫不用改程式碼。
+
+DEFAULT_PRIMARY_SPREADSHEET_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1tgxjrFn5uZ0-InGARzwsRGxNMsUfMKg2Fp7B36Y5vY4/edit"
 )
 
-# 舊版：保留緊急回復用
-LEGACY_SPREADSHEET_URL = (
+DEFAULT_LEGACY_SPREADSHEET_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "18DI3Lpyk8R5pT_3K7B4oLLK_vsHYuWh2JXRP8MLyGQM/edit"
 )
 
-# Render 可用 Environment Variable 覆蓋，不必再改程式碼：
-# SMARTPROP_SPREADSHEET_URL=<Google Sheet URL>
-# SMARTPROP_USE_LEGACY_SHEET=true  -> 立即切回舊資料庫
-_env_sheet_url = os.getenv("SMARTPROP_SPREADSHEET_URL", "").strip()
-_use_legacy_sheet = os.getenv("SMARTPROP_USE_LEGACY_SHEET", "false").strip().lower() in {
-    "1", "true", "yes", "on"
-}
+PRIMARY_SPREADSHEET_URL = os.getenv(
+    "SMARTPROP_SPREADSHEET_URL",
+    DEFAULT_PRIMARY_SPREADSHEET_URL
+).strip()
 
-if _use_legacy_sheet:
+LEGACY_SPREADSHEET_URL = os.getenv(
+    "SMARTPROP_LEGACY_SPREADSHEET_URL",
+    DEFAULT_LEGACY_SPREADSHEET_URL
+).strip()
+
+USE_LEGACY_SHEET = os.getenv(
+    "SMARTPROP_USE_LEGACY_SHEET",
+    "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+if USE_LEGACY_SHEET:
     SPREADSHEET_URL = LEGACY_SPREADSHEET_URL
     DATA_SOURCE_LABEL = "舊版 Google Sheet（Rollback）"
-elif _env_sheet_url:
-    SPREADSHEET_URL = _env_sheet_url
-    DATA_SOURCE_LABEL = "Render Environment 指定 Google Sheet"
 else:
     SPREADSHEET_URL = PRIMARY_SPREADSHEET_URL
-    DATA_SOURCE_LABEL = "SmartProp / LINE Agent 共用 Google Sheet"
+    DATA_SOURCE_LABEL = "SmartProp 共用正式資料庫"
 
 SPREADSHEET_NAME = SPREADSHEET_URL
 
-# 到這裡 DATA_SOURCE_LABEL 才已完成初始化
+# 僅顯示安全資訊，不把完整 URL / ID 印到畫面
 st.caption(f"☁️ 目前資料來源：{DATA_SOURCE_LABEL}")
 
 def generate_default_units():
@@ -276,7 +287,7 @@ today_dt = datetime.date.today()
 with st.sidebar:
     st.markdown("### ☁️ SmartProp 資料核心")
     st.write(DATA_SOURCE_LABEL)
-    if _use_legacy_sheet:
+    if USE_LEGACY_SHEET:
         st.warning("目前為 Rollback 舊資料庫模式")
     else:
         st.success("目前使用新版共用資料庫")
