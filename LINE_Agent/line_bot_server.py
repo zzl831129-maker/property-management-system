@@ -295,6 +295,101 @@ def _build_summary_flex(reply_text: str):
     return None
 
 
+
+# ============================================================
+# Flex：住戶資訊總覽
+# ============================================================
+
+def _build_resident_overview_flex(user_text: str, reply_text: str):
+    """
+    專門處理：
+    查1A / 1A資料 / 查詢2A住戶
+
+    即使該戶沒有車，也會顯示「目前無車位 / 車輛登記」，
+    不會退化成只顯示零用金卡。
+    """
+    resident_id = _extract_resident_id(user_text)
+    if not resident_id:
+        return None
+
+    if f"【{resident_id}｜住戶資訊總覽】" not in reply_text:
+        return None
+
+    # ---- 零用金 ----
+    balance = _money_from_line(reply_text, "目前餘額")
+    income = _money_from_line(reply_text, "累計收入")
+    expense = _money_from_line(reply_text, "累計支出")
+    ledger_status = "已透支" if "🔴 已透支" in reply_text else "餘額正常"
+
+    body = [
+        {
+            "type": "text",
+            "text": "💰 零用金",
+            "weight": "bold",
+            "size": "md",
+        },
+        _label_value("目前餘額", f"NT$ {balance}", True),
+        _label_value("累計收入", f"NT$ {income}"),
+        _label_value("累計支出", f"NT$ {expense}"),
+        _label_value("帳務狀態", ledger_status),
+        _separator(),
+        {
+            "type": "text",
+            "text": "🅿️ 車位 / 車輛",
+            "weight": "bold",
+            "size": "md",
+            "margin": "md",
+        },
+    ]
+
+    # ---- 車位 ----
+    no_parking = (
+        "目前無車位登記紀錄" in reply_text
+        or f"【{resident_id}｜車位查詢】" in reply_text
+    )
+
+    vehicles = _parse_parking_blocks(reply_text)
+
+    if no_parking or not vehicles:
+        body.append({
+            "type": "text",
+            "text": "目前無車位 / 車輛登記",
+            "size": "sm",
+            "wrap": True,
+            "margin": "sm",
+        })
+    else:
+        for index, vehicle in enumerate(vehicles, start=1):
+            if index > 1:
+                body.append({
+                    "type": "separator",
+                    "margin": "md",
+                })
+
+            body.extend([
+                {
+                    "type": "text",
+                    "text": f"{vehicle['icon']} 車輛 {index}",
+                    "weight": "bold",
+                    "size": "sm",
+                    "margin": "md" if index > 1 else "sm",
+                },
+                _label_value("車位", vehicle["space"], True),
+                _label_value("車牌", vehicle["plate"]),
+                _label_value("身分", vehicle["identity"]),
+            ])
+
+    body.extend([
+        _separator(),
+        _hint("資料來源：Google Sheet 即時查詢"),
+    ])
+
+    return _bubble(
+        f"🏠 {resident_id}｜住戶資訊",
+        body,
+    )
+
+
 # ============================================================
 # 決定 LINE 要回純文字還是 Flex
 # ============================================================
@@ -309,7 +404,8 @@ def _build_reply_message(user_text: str, reply_text: str):
     """
     try:
         flex_json = (
-            _build_ledger_flex(user_text, reply_text)
+            _build_resident_overview_flex(user_text, reply_text)
+            or _build_ledger_flex(user_text, reply_text)
             or _build_parking_flex(user_text, reply_text)
             or _build_summary_flex(reply_text)
         )
