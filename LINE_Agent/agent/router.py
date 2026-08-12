@@ -44,6 +44,9 @@ def get_ai_response(user_text: str) -> str:
         if "零用金" in user_text:
             return str(get_ledger_balance("1A"))
 
+        if "車位" in user_text:
+            return str(get_parking_info("2A"))
+
         # 其他問題才交給 Gemini
         model = genai.GenerativeModel(
             model_name=GEMINI_MODEL,
