@@ -1,3 +1,4 @@
+import re
 import os
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -41,11 +42,25 @@ def get_ai_response(user_text: str) -> str:
         # 第一階段測試：
         # 只要使用者提到「零用金」，直接查詢 1A
         # 暫時繞過 Gemini，確認 Google Sheet 查詢功能是否正常
+       # 從使用者訊息抓戶別，例如 1A、2B、12C
+  # 從使用者訊息抓戶別，例如：1A、2B、12C
+        resident_match = re.search(r"\b\d+[A-Za-z]\b", user_text)
+
+        if resident_match:
+            resident_id = resident_match.group().upper()
+
+            if "零用金" in user_text:
+                return str(get_ledger_balance(resident_id))
+
+            if "車位" in user_text:
+                return str(get_parking_info(resident_id))
+
+        # 有查詢意圖，但沒有提供戶別
         if "零用金" in user_text:
-            return str(get_ledger_balance("1A"))
+            return "請提供戶別，例如：查詢 1A 零用金。"
 
         if "車位" in user_text:
-            return str(get_parking_info("2A"))
+            return "請提供戶別，例如：查詢 2A 車位。"
 
         # 其他問題才交給 Gemini
         model = genai.GenerativeModel(
